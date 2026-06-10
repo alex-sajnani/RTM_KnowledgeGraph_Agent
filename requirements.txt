@@ -1,0 +1,6 @@
+streamlit>=1.35.0
+networkx>=3.3
+langchain-openai>=0.2.0
+langchain-core>=0.2.0
+langgraph>=0.2.0
+python-dotenv>=1.0.0

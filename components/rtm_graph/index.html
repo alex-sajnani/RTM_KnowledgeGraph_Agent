@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #ffffff; overflow: hidden; }
+  #graph { width: 100vw; height: 820px; background: #ffffff; }
+
+  #controls {
+    position: fixed;
+    right: 18px;
+    bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    z-index: 999;
+  }
+
+  /* ── Joystick ── */
+  #joy-base {
+    width: 76px; height: 76px;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.22);
+    border-radius: 50%;
+    position: relative;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+  }
+  #joy-base:active { cursor: grabbing; }
+  #joy-thumb {
+    width: 30px; height: 30px;
+    background: rgba(255,255,255,0.55);
+    border-radius: 50%;
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow: 0 0 6px rgba(0,0,0,0.4);
+    transition: background 0.1s;
+  }
+
+  /* ── Zoom wrap ── */
+  #zoom-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .zoom-btn {
+    width: 26px; height: 26px;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.22);
+    border-radius: 6px;
+    color: #ddd;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s;
+  }
+  .zoom-btn:hover { background: rgba(255,255,255,0.2); }
+
+  #zoom-slider {
+    -webkit-appearance: slider-vertical;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 26px;
+    height: 110px;
+    cursor: pointer;
+    accent-color: rgba(255,255,255,0.65);
+    background: transparent;
+  }
+
+  /* ── Node detail panel ── */
+  #node-detail {
+    display: none;
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 88px;
+    background: rgba(255,255,255,0.97);
+    border: 1px solid #dde1e7;
+    border-radius: 8px;
+    padding: 12px 36px 12px 14px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.13);
+    z-index: 20;
+    max-height: 180px;
+    overflow-y: auto;
+    font-family: sans-serif;
+  }
+  #node-detail-id {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: #888;
+    text-transform: uppercase;
+    margin: 0 0 2px 0;
+  }
+  #node-detail-meta {
+    font-size: 10px;
+    color: #999;
+    margin: 0 0 6px 0;
+  }
+  #node-detail-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #111;
+    margin: 0 0 6px 0;
+    line-height: 1.35;
+  }
+  #node-detail-desc {
+    font-size: 12px;
+    color: #444;
+    margin: 0;
+    line-height: 1.55;
+    white-space: pre-wrap;
+  }
+  #node-detail-close {
+    position: absolute;
+    top: 8px; right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #aaa;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+  }
+  #node-detail-close:hover { color: #333; }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+
+<div id="controls">
+  <div id="joy-base"><div id="joy-thumb"></div></div>
+  <div id="zoom-wrap">
+    <button class="zoom-btn" id="btn-in">+</button>
+    <input type="range" id="zoom-slider" min="0.05" max="3" step="0.02" value="1">
+    <button class="zoom-btn" id="btn-out">−</button>
+  </div>
+</div>
+
+<div id="node-detail">
+  <button id="node-detail-close">&#x2715;</button>
+  <p id="node-detail-id"></p>
+  <p id="node-detail-meta"></p>
+  <p id="node-detail-title"></p>
+  <p id="node-detail-desc"></p>
+</div>
+
+<script>
+// ── Minimal Streamlit component protocol ──────────────────────────────────────
+var _renderCallback = null;
+window.addEventListener('message', function(e) {
+  if (e.data.type === 'streamlit:render') {
+    if (_renderCallback) _renderCallback(e.data);
+  }
+});
+function setComponentValue(val) {
+  window.parent.postMessage({ type: 'streamlit:setComponentValue', value: val }, '*');
+}
+function setFrameHeight(h) {
+  window.parent.postMessage({ type: 'streamlit:setFrameHeight', height: h }, '*');
+}
+function onRender(fn) { _renderCallback = fn; }
+// Signal ready to Streamlit
+window.parent.postMessage({ type: 'streamlit:componentReady', apiVersion: 1 }, '*');
+setFrameHeight(820);
+
+// ── Graph state ───────────────────────────────────────────────────────────────
+var network    = null;
+var nodesData  = null;
+var edgesData  = null;
+var lastNodesJson = null;
+var lastEdgesJson = null;
+
+onRender(function(data) {
+  var args        = data.args;
+  var nodesJson   = args.nodes_json;
+  var edgesJson   = args.edges_json;
+  var savedPos    = args.saved_positions || {};
+  var hasSaved    = Object.keys(savedPos).length > 0;
+
+  // Only re-initialise the graph when the node/edge data actually changes.
+  // Returning from another tab re-triggers onRender with the same data —
+  // skipping re-init preserves any in-session drag state and avoids a flash.
+  if (nodesJson === lastNodesJson && edgesJson === lastEdgesJson && network !== null) {
+    return;
+  }
+  lastNodesJson = nodesJson;
+  lastEdgesJson = edgesJson;
+
+  nodesData = new vis.DataSet(JSON.parse(nodesJson));
+  edgesData = new vis.DataSet(JSON.parse(edgesJson));
+
+  if (network) { network.destroy(); }
+
+  network = new vis.Network(
+    document.getElementById('graph'),
+    { nodes: nodesData, edges: edgesData },
+    {
+      layout: {
+        hierarchical: {
+          enabled: true,
+          levelSeparation: 280,
+          nodeSpacing: 220,
+          treeSpacing: 350,
+          sortMethod: 'directed',
+          direction: 'UD',
+          edgeMinimization: true,
+          blockShifting: true,
+          parentCentralization: true,
+          improvedLayout: true,
+        }
+      },
+      physics: { enabled: false },
+      interaction: { dragNodes: true, dragView: true, zoomView: false, hover: true, navigationButtons: false, keyboard: false },
+      nodes: { borderWidth: 1, shape: 'dot', font: { color: '#111111', size: 12 } },
+      edges: { arrows: { to: { enabled: true, scaleFactor: 0.7 } }, font: { size: 13, color: '#000000', background: 'white', strokeWidth: 3, strokeColor: 'white', align: 'middle' } },
+    }
+  );
+
+  // ── Position after initial layout ─────────────────────────────────────────
+  network.once('afterDrawing', function() {
+    var pos = network.getPositions();
+
+    if (hasSaved) {
+      // Apply the persisted positions for every node that is in this render
+      var updates = Object.keys(savedPos)
+        .filter(function(id) { return nodesData.get(id) !== null; })
+        .map(function(id) { return { id: id, x: savedPos[id].x, y: savedPos[id].y }; });
+      if (updates.length) nodesData.update(updates);
+    } else {
+      // Default layout: VP branches left of DI/DO, each DO aligned with its DI
+      var diDoIds = ['DI-001','DI-002','DO-001','DO-002'];
+      var minDIDOx = diDoIds.reduce(function(m, id) {
+        return pos[id] ? Math.min(m, pos[id].x) : m;
+      }, Infinity);
+      if (minDIDOx === Infinity) return;
+
+      var updates = [];
+      [['DI-001','DO-001'],['DI-002','DO-002']].forEach(function(pair) {
+        var di = pos[pair[0]], dov = pos[pair[1]];
+        if (di && dov) updates.push({ id: pair[1], x: di.x, y: dov.y });
+      });
+
+      var vpX1 = minDIDOx - 350;
+      if (pos['DI-001'] && pos['DO-001'] && pos['VP-001']) {
+        updates.push({ id: 'VP-001', x: vpX1, y: (pos['DI-001'].y + pos['DO-001'].y) / 2 });
+        ['TR-001A','CAPA-018','PM-001'].forEach(function(id) {
+          if (pos[id]) updates.push({ id: id, x: vpX1, y: pos[id].y });
+        });
+      }
+
+      var vpX2 = minDIDOx - 130;
+      if (pos['DI-002'] && pos['DO-002'] && pos['VP-002']) {
+        updates.push({ id: 'VP-002', x: vpX2, y: (pos['DI-002'].y + pos['DO-002'].y) / 2 });
+        if (pos['TR-002A']) updates.push({ id: 'TR-002A', x: vpX2, y: pos['TR-002A'].y });
+      }
+
+      if (updates.length) nodesData.update(updates);
+    }
+  });
+
+  // ── Persist positions after every drag ────────────────────────────────────
+  network.on('dragEnd', function(params) {
+    if (params.nodes.length > 0) {
+      setComponentValue(network.getPositions());
+    }
+  });
+
+  // ── Edge label visibility ─────────────────────────────────────────────────
+  var edgeLabelMap = {};
+  edgesData.forEach(function(e) { edgeLabelMap[e.id] = e.label || ''; });
+
+  function refreshEdgeLabels() {
+    var pos = network.getPositions();
+    var vp  = network.getViewPosition();
+    var sc  = network.getScale();
+    var el  = document.getElementById('graph');
+    var hw  = el.offsetWidth  / sc / 2;
+    var hh  = el.offsetHeight / sc / 2;
+    var pad = 60 / sc;
+    var l = vp.x - hw - pad, r = vp.x + hw + pad;
+    var t = vp.y - hh - pad, b = vp.y + hh + pad;
+    var updates = [];
+    edgesData.forEach(function(e) {
+      var fp = pos[e.from], tp = pos[e.to];
+      if (!fp || !tp) return;
+      var both = fp.x > l && fp.x < r && fp.y > t && fp.y < b
+              && tp.x > l && tp.x < r && tp.y > t && tp.y < b;
+      var hDist = Math.abs(fp.x - tp.x);
+      var vDist = Math.abs(fp.y - tp.y);
+      var isCrossBranch = vDist > 0 && (hDist / vDist) > 1.5;
+      var want = (both && !isCrossBranch) ? edgeLabelMap[e.id] : '';
+      if (e.label !== want) updates.push({ id: e.id, label: want });
+    });
+    if (updates.length) edgesData.update(updates);
+  }
+
+  // ── Fit on load ───────────────────────────────────────────────────────────
+  var slider = document.getElementById('zoom-slider');
+  network.once('afterDrawing', function() {
+    network.fit({ animation: false });
+    slider.value = Math.min(3, Math.max(0.05, network.getScale()));
+    refreshEdgeLabels();
+  });
+  network.on('zoom',    refreshEdgeLabels);
+  network.on('dragEnd', refreshEdgeLabels);
+
+  // ── Joystick ──────────────────────────────────────────────────────────────
+  var joyBase  = document.getElementById('joy-base');
+  var joyThumb = document.getElementById('joy-thumb');
+  var BASE_R = 38, THUMB_R = 15;
+  var jdx = 0, jdy = 0, jActive = false, rafId = null;
+
+  function panLoop() {
+    if (jdx !== 0 || jdy !== 0) {
+      var p = network.getViewPosition();
+      var s = network.getScale();
+      network.moveTo({ position: { x: p.x + jdx * 5 / s, y: p.y + jdy * 5 / s }, animation: false });
+    }
+    rafId = requestAnimationFrame(panLoop);
+  }
+
+  joyBase.addEventListener('pointerdown', function(e) {
+    jActive = true;
+    joyBase.setPointerCapture(e.pointerId);
+    joyThumb.style.background = 'rgba(255,255,255,0.88)';
+    rafId = requestAnimationFrame(panLoop);
+    e.preventDefault();
+  });
+  joyBase.addEventListener('pointermove', function(e) {
+    if (!jActive) return;
+    var r  = joyBase.getBoundingClientRect();
+    var cx = r.left + BASE_R, cy = r.top + BASE_R;
+    var ox = e.clientX - cx, oy = e.clientY - cy;
+    var d = Math.hypot(ox, oy), maxD = BASE_R - THUMB_R;
+    if (d > maxD) { ox = ox / d * maxD; oy = oy / d * maxD; }
+    joyThumb.style.transform = 'translate(calc(-50% + ' + ox + 'px), calc(-50% + ' + oy + 'px))';
+    jdx = ox / maxD;
+    jdy = oy / maxD;
+  });
+  function joyRelease() {
+    jActive = false; jdx = 0; jdy = 0;
+    joyThumb.style.transform = 'translate(-50%, -50%)';
+    joyThumb.style.background = 'rgba(255,255,255,0.55)';
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  }
+  joyBase.addEventListener('pointerup',     joyRelease);
+  joyBase.addEventListener('pointercancel', joyRelease);
+
+  // ── Zoom slider ───────────────────────────────────────────────────────────
+  function setZoom(s) {
+    s = Math.min(3, Math.max(0.05, s));
+    network.moveTo({ scale: s, animation: { duration: 180, easingFunction: 'easeInOutQuad' } });
+    slider.value = s;
+  }
+  network.on('zoom', function(p) { slider.value = Math.min(3, Math.max(0.05, p.scale)); });
+  slider.addEventListener('input', function() {
+    network.moveTo({ scale: parseFloat(slider.value), animation: false });
+  });
+  document.getElementById('btn-in') .addEventListener('click', function() { setZoom(network.getScale() * 1.25); });
+  document.getElementById('btn-out').addEventListener('click', function() { setZoom(network.getScale() / 1.25); });
+
+  // ── Node detail panel (double-click) ─────────────────────────────────────
+  var detailPanel = document.getElementById('node-detail');
+  network.on('doubleClick', function(params) {
+    if (params.nodes.length === 0) { detailPanel.style.display = 'none'; return; }
+    var n = nodesData.get(params.nodes[0]);
+    if (!n) return;
+    document.getElementById('node-detail-id').textContent    = n.id;
+    document.getElementById('node-detail-meta').textContent  = n.node_type + ' · ' + n.node_status;
+    document.getElementById('node-detail-title').textContent = n.node_title || '';
+    document.getElementById('node-detail-desc').textContent  = n.node_description || '(no description)';
+    detailPanel.style.display = 'block';
+  });
+  document.getElementById('node-detail-close').addEventListener('click', function() {
+    detailPanel.style.display = 'none';
+  });
+});
+</script>
+</body>
+</html>
