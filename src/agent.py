@@ -347,9 +347,12 @@ def build_impact_agent(graph: RTMGraph) -> Any:
             "ISO 13485:2016, ISO 14971:2019, and CLSI analytical performance standards "
             "(EP17-A2, EP05-A3) also apply.\n\n"
             f"{reg_context}\n\n"
+            "Ground every regulatory statement in the verbatim eCFR text supplied above — cite the "
+            "exact section provided and do not rely on your own recollection of the regulations or "
+            "paraphrase, summarize, or invent regulatory language. If a point is not supported by "
+            "the supplied text, say so rather than asserting it. "
             "Your role is to summarize the impact for a human reviewer who must decide whether "
-            "to approve compliance status updates. Be specific, factual, and cite applicable "
-            "regulatory sections where relevant. "
+            "to approve compliance status updates. Be specific and factual. "
             "Do not make compliance decisions — only surface what needs human review."
         )
 

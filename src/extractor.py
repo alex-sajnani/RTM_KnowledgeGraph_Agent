@@ -136,6 +136,10 @@ structured RTM (Requirements Traceability Matrix) entities.
 
 {build_prompt_context(_regulations, ["820.30"])}
 
+Ground all regulatory reasoning in the verbatim eCFR text above — rely on the exact section text
+supplied rather than your own training-knowledge recollection of the regulation, and never
+paraphrase or invent regulatory language.
+
 {GRAPH_STRUCTURE_RULES}
 
 You must return a valid JSON object — nothing else. No preamble, no markdown fences.
