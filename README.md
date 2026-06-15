@@ -21,11 +21,6 @@ Risk management (ISO 14971), running in parallel and feeding into the backbone:
 Quality system (conditional branch off a nonconforming result):
   Test Result (fails spec) → CAPA
 ```
-
-Hazards are *not* derived from user needs — they're identified by a separate risk-analysis process and merge into the design chain when a Risk Control becomes a design input or output. CAPA is not a mandatory terminal step; it's triggered only when a Test Result is a nonconformance.
-
-Every edge points from the artifact that, when changed, forces work on the artifact it points to — so a change impact analysis is a straightforward graph traversal downstream. Upstream predecessors are also surfaced for QMSR §820.30(b) bidirectional traceability review.
-
 Most teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence or trigger PMA supplement review cannot proceed without explicit documented sign-off.
 
 **Six core capabilities:**
