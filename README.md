@@ -137,7 +137,7 @@ The app loads a representative RTM for a **high-sensitivity cardiac Troponin I (
 
 ## Regulatory Context
 
-The following regulations are actively queried at startup via the [eCFR public API](https://www.ecfr.gov) (`ecfr.gov/api/versioner/v1`). Verbatim section text is injected into every LLM prompt at runtime and cached locally for 7 days (`regulations_cache.json`).
+The following regulations (Note: Not an exhaustive regulatory list) are actively queried at startup via the [eCFR public API](https://www.ecfr.gov) (`ecfr.gov/api/versioner/v1`). Verbatim section text is injected into every LLM prompt at runtime and cached locally for 7 days (`regulations_cache.json`).
 
 > **Note — the regulations cache is intentional, not just a speed optimization.** `regulations_cache.json` is the authoritative store of *verbatim* CFR text, and the LLM is explicitly instructed to ground its compliance reasoning in this supplied text rather than its own training knowledge. This keeps every regulatory citation exact, auditable, and version-pinned (the cache records the eCFR retrieval date) and prevents the model from hallucinating or paraphrasing the regulation. The cache is the single source of regulatory truth the model pulls from.
 
