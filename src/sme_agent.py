@@ -112,6 +112,9 @@ TEAM_SYSTEM_PROMPTS: dict[str, str] = {
         "using this device must re-verify the updated performance specifications under CLIA before "
         "reporting patient results. Be concise and technical.\n\n"
         + build_prompt_context(_regulations, ["493.1253"])
+        + "\n\nGround every regulatory statement in the verbatim eCFR text above — cite the exact "
+        "section supplied rather than relying on your own recollection of the regulation, and do "
+        "not paraphrase or invent regulatory language."
     ),
     "R&D": (
         "You are a senior assay development scientist assessing whether new bench validation "
@@ -137,6 +140,9 @@ TEAM_SYSTEM_PROMPTS: dict[str, str] = {
         "to re-verify performance specifications before reporting patient results. "
         "Be precise about regulatory citations.\n\n"
         + build_prompt_context(_regulations, ["820.30", "493.1253", "493.1255"])
+        + "\n\nGround every regulatory statement in the verbatim eCFR text above — cite the exact "
+        "section supplied rather than relying on your own recollection of the regulation, and do "
+        "not paraphrase or invent regulatory language."
     ),
 }
 
