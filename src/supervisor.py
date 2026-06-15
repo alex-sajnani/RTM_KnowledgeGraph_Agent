@@ -5,7 +5,8 @@ Coordinates two sub-agents in sequence, then adds risk scoring and an
 optional escalation gate before assembling the final report:
 
   1. run_impact_agent   — Change Impact sub-agent (traverse → classify → report)
-  2. score_risk         — Deterministic risk level + LLM explanation
+  2. score_risk         — Deterministic risk level (reviewer-attested change type
+                          + structural ceiling) + LLM explanation
   3. [conditional]      — "critical" → escalation_gate (interrupt); else → run_sme_agent
   4. escalation_gate    — LangGraph interrupt(): pauses for human review
                           resume approved  → run_sme_agent
@@ -54,7 +55,13 @@ from sme_agent import (
 )
 from graph import RTMGraph, NodeType
 
-__all__ = ["build_supervisor", "run_full_analysis"]
+__all__ = [
+    "build_supervisor",
+    "run_full_analysis",
+    "CHANGE_TYPES",
+    "NON_SUBSTANTIVE_CHANGE_TYPES",
+    "DEFAULT_CHANGE_TYPE",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +71,7 @@ __all__ = ["build_supervisor", "run_full_analysis"]
 class SupervisorState(TypedDict):
     changed_node_id: str
     change_description: str
+    change_type: str             # reviewer-attested type; drives risk downgrade
     impact_result: dict          # raw AgentState dict from the impact sub-agent
     sme_result: dict             # raw SMEState dict from the SME router sub-agent
     risk_level: str              # "low" | "high" | "critical"
@@ -77,20 +85,44 @@ class SupervisorState(TypedDict):
 # Risk scoring — deterministic level, LLM explanation only
 # ---------------------------------------------------------------------------
 
-class RiskExplanation(BaseModel):
+# Change-type classification — drives the deterministic risk downgrade.
+# The reviewer attests the change type at submit time; a non-substantive type
+# (documentation-only, no change) downgrades the structural ceiling to "low",
+# while substantive types leave the ceiling intact. This replaces an LLM
+# inference of "is this substantive?" with an auditable human attestation.
+CHANGE_TYPES = [
+    "Functional change",
+    "Corrective / CAPA action",
+    "Documentation only",
+    "No change",
+]
+NON_SUBSTANTIVE_CHANGE_TYPES = {"Documentation only", "No change"}
+DEFAULT_CHANGE_TYPE = "Functional change"
+
+
+class RiskAssessment(BaseModel):
+    """Internal container for the scored result: a code-decided level plus prose."""
+    risk_level: Literal["low", "high", "critical"]
     rationale: str
     immediate_concerns: list[str]
 
 
-def _compute_risk_level(impact_result: dict) -> str:
-    """
-    Determine risk level from structural signals alone — no LLM involved.
+class RiskExplanation(BaseModel):
+    """LLM structured output — prose only. The risk level is decided in code."""
+    rationale: str
+    immediate_concerns: list[str]
 
-    critical: Any V&V invalidation OR any PMA supplement flag.
-    high:     Any CAPA trigger OR any Hazard/Risk Control node in the impact chain.
+
+def _structural_risk_ceiling(impact_result: dict) -> str:
+    """
+    Compute the maximum risk level the structural topology allows.
+
+    This is a ceiling — the LLM may only assess risk at or below this level.
+    critical: Any V&V invalidation.
+    high:     Any CAPA trigger OR Hazard/Risk Control node in the impact chain.
     low:      Everything else.
     """
-    if impact_result.get("vv_invalidations") or impact_result.get("pma_supplement_flags"):
+    if impact_result.get("vv_invalidations"):
         return "critical"
     high_types = {NodeType.HAZARD.value, NodeType.RISK_CONTROL.value}
     if impact_result.get("capa_triggers") or any(
@@ -101,17 +133,40 @@ def _compute_risk_level(impact_result: dict) -> str:
     return "low"
 
 
-def _generate_risk_explanation(
-    risk_level: str,
+def _risk_level_for_change(change_type: str, impact_result: dict) -> str:
+    """
+    Decide the risk level: the structural ceiling, downgraded to 'low' for a
+    non-substantive change type.
+
+    This is a pure function of (change_type, topology) — no model opinion, fully
+    reproducible, and auditable: the reviewer attests the change type and the
+    topology is a verifiable fact. A non-substantive change (documentation-only,
+    no change) is 'low' even when V&V nodes are topologically downstream, because
+    nothing was actually altered to invalidate them.
+    """
+    if change_type in NON_SUBSTANTIVE_CHANGE_TYPES:
+        return "low"
+    return _structural_risk_ceiling(impact_result)
+
+
+def _assess_risk(
+    change_type: str,
     change_description: str,
     impact_result: dict,
-) -> RiskExplanation:
+) -> RiskAssessment:
     """
-    Call LLM to produce a plain-English rationale and ordered concern list.
+    Produce the scored risk result: a code-decided level plus a plain-English
+    explanation.
 
-    The risk_level is already determined deterministically — the LLM only
-    explains it and surfaces what the reviewer should act on first.
+    The level comes from `_risk_level_for_change` — the LLM never decides or
+    changes it. The LLM is handed the already-decided level and writes only the
+    rationale and the immediate actions the review team must take. If the LLM is
+    unavailable, a deterministic fallback explanation is returned. This keeps the
+    safety-relevant decision auditable while still producing readable guidance.
     """
+    risk_level = _risk_level_for_change(change_type, impact_result)
+    ceiling = _structural_risk_ceiling(impact_result)
+    downgraded = risk_level == "low" and ceiling != "low"
     node_summary = "\n".join(
         f"- [{n['node_type']}] {n['node_id']}: {n['title']}"
         for n in impact_result.get("impacted_nodes", [])
@@ -119,22 +174,31 @@ def _generate_risk_explanation(
 
     system_prompt = (
         "You are a regulatory affairs specialist for an IVD medical device company. "
-        "A change impact analysis has been run on the Requirements Traceability Matrix "
-        "for a high-sensitivity cardiac Troponin I immunoassay (PMA P240052). "
-        "Explain the risk level in plain English and list the most urgent actions, "
-        "ordered by regulatory priority. Be concise and specific."
+        "A change impact analysis has been run on a Requirements Traceability Matrix, "
+        "and the risk level has ALREADY been determined. Your job is to explain that "
+        "determination in plain English and list the immediate actions the review team "
+        "must take — you do NOT decide or change the risk level.\n\n"
+        "IMPORTANT: Only reference node IDs and artifacts explicitly listed in the user message."
     )
 
     user_prompt = (
+        f"Change type: {change_type}\n"
         f"Change description: {change_description}\n\n"
-        f"Risk level (already determined): {risk_level.upper()}\n\n"
+        f"Determined risk level: {risk_level.upper()}\n"
+        f"Structural ceiling (maximum risk from topology): {ceiling.upper()}\n\n"
         f"Structural triggers:\n"
         f"  V&V invalidations: {impact_result.get('vv_invalidations') or 'none'}\n"
-        f"  PMA supplement flags: {impact_result.get('pma_supplement_flags') or 'none'}\n"
         f"  CAPA triggers: {impact_result.get('capa_triggers') or 'none'}\n\n"
-        f"Impacted nodes:\n{node_summary or '(none)'}\n\n"
-        f"Write a 2-3 sentence rationale explaining why this risk level applies, "
-        f"then list the top 3 immediate actions the review team must take."
+        f"Nodes in impact chain (only these exist in scope):\n"
+        f"{node_summary or '(none)'}\n\n"
+        + (
+            "Note: the topology would allow a higher risk, but the reviewer classified "
+            "this as a non-substantive change, so the level is LOW. Explain why the "
+            "structural triggers do not apply given the change type.\n\n"
+            if downgraded else ""
+        )
+        + f"Write a 2-3 sentence rationale for the {risk_level.upper()} rating, and list "
+        f"the top 3 immediate actions the review team must take. Only cite node IDs listed above."
     )
 
     try:
@@ -143,13 +207,20 @@ def _generate_risk_explanation(
             api_key=os.getenv("OPENAI_API_KEY"),
             max_tokens=400,
         ).with_structured_output(RiskExplanation)
-        return llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        explanation = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        return RiskAssessment(
+            risk_level=risk_level,
+            rationale=explanation.rationale,
+            immediate_concerns=explanation.immediate_concerns,
+        )
     except Exception:
-        return RiskExplanation(
+        return RiskAssessment(
+            risk_level=risk_level,
             rationale=(
-                f"[LLM unavailable] Risk level '{risk_level}' determined from structural signals: "
+                f"[LLM unavailable] {risk_level.upper()} risk for a '{change_type}' change. "
+                f"Structural ceiling '{ceiling}': "
                 f"V&V invalidations={impact_result.get('vv_invalidations')}, "
-                f"PMA flags={impact_result.get('pma_supplement_flags')}."
+                f"CAPA triggers={impact_result.get('capa_triggers')}."
             ),
             immediate_concerns=["Check OPENAI_API_KEY and rerun for detailed guidance."],
         )
@@ -190,7 +261,6 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
             "upstream_ids": [],
             "impacted_nodes": [],
             "vv_invalidations": [],
-            "pma_supplement_flags": [],
             "capa_triggers": [],
             "llm_summary": "",
         }
@@ -203,23 +273,24 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
 
     def score_risk_node(state: SupervisorState) -> SupervisorState:
         """
-        Determine risk level deterministically, then generate LLM explanation.
+        Decide the risk level deterministically, then have the LLM explain it.
 
-        Risk level controls routing (critical → escalation gate). The LLM only
-        produces human-readable rationale and concern list — it cannot change
-        the routing outcome.
+        The level is a pure function of the reviewer-attested change type and the
+        graph topology (`_risk_level_for_change`); a non-substantive change
+        (documentation-only, no change) yields 'low' even when V&V nodes are
+        topologically downstream. The LLM only writes the rationale and immediate
+        actions. Risk level controls routing (critical → escalation gate).
         """
-        risk_level = _compute_risk_level(state["impact_result"])
-        explanation = _generate_risk_explanation(
-            risk_level,
+        assessment = _assess_risk(
+            state.get("change_type", DEFAULT_CHANGE_TYPE),
             state["change_description"],
             state["impact_result"],
         )
         return {
             **state,
-            "risk_level": risk_level,
-            "risk_rationale": explanation.rationale,
-            "immediate_concerns": explanation.immediate_concerns,
+            "risk_level": assessment.risk_level,
+            "risk_rationale": assessment.rationale,
+            "immediate_concerns": assessment.immediate_concerns,
         }
 
     # ------------------------------------------------------------------
@@ -250,7 +321,6 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
             "risk_rationale": state["risk_rationale"],
             "immediate_concerns": state["immediate_concerns"],
             "vv_invalidations": state["impact_result"].get("vv_invalidations", []),
-            "pma_flags": state["impact_result"].get("pma_supplement_flags", []),
             "capa_triggers": state["impact_result"].get("capa_triggers", []),
         })
         return {**state, "escalation_decision": decision}
@@ -264,9 +334,21 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
     # ------------------------------------------------------------------
 
     def run_sme_agent_node(state: SupervisorState) -> SupervisorState:
-        """Invoke the SME Router sub-agent with the scored impacted nodes."""
+        """Invoke the SME Router sub-agent with the scored impacted nodes.
+
+        Passes the change description and changed-node identity through so each
+        team briefing reacts to the specific change, not just the impacted nodes.
+        """
+        changed_id = state["changed_node_id"]
+        try:
+            changed_title = graph.get_node(changed_id)["title"]
+        except KeyError:
+            changed_title = changed_id
         initial: SMEState = {
             "impacted_nodes": state["impact_result"].get("impacted_nodes", []),
+            "change_description": state["change_description"],
+            "changed_node_id": changed_id,
+            "changed_node_title": changed_title,
             "sme_notifications": [],
             "team_briefings": {},
         }
@@ -309,10 +391,10 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
             changed_node_id=changed_id,
             changed_node_title=changed_title,
             change_description=state["change_description"],
+            change_type=state.get("change_type", DEFAULT_CHANGE_TYPE),
             timestamp=datetime.now(timezone.utc).isoformat(),
             impacted_nodes=impacted,
             vv_invalidations=impact.get("vv_invalidations", []),
-            pma_supplement_flags=impact.get("pma_supplement_flags", []),
             capa_triggers=impact.get("capa_triggers", []),
             llm_summary=impact.get("llm_summary", ""),
             sme_notifications=sme_notifications,
@@ -362,6 +444,7 @@ def run_full_analysis(
     thread_id: str | None = None,
     resume_payload: dict | None = None,
     supervisor: Any = None,
+    change_type: str = DEFAULT_CHANGE_TYPE,
 ) -> tuple[ImpactReport | None, dict | None, str]:
     """
     Run the full multi-agent change impact pipeline.
@@ -387,6 +470,9 @@ def run_full_analysis(
         supervisor: Pre-compiled supervisor graph. Pass st.session_state.supervisor
                     to avoid rebuilding on every call. If None, build_supervisor()
                     is called (useful for standalone/test use).
+        change_type: Reviewer-attested change type (one of CHANGE_TYPES). A
+                     non-substantive type downgrades the risk level to "low";
+                     ignored on resume. Defaults to "Functional change".
 
     Returns:
         (ImpactReport, None, thread_id)       — analysis complete
@@ -406,6 +492,7 @@ def run_full_analysis(
         initial: SupervisorState = {
             "changed_node_id": changed_node_id,
             "change_description": change_description,
+            "change_type": change_type,
             "impact_result": {},
             "sme_result": {},
             "risk_level": "",

@@ -1,17 +1,28 @@
 # RTM Knowledge Graph Agent
 ### hs-cTnI Immunoassay — PMA Change Impact Analysis via Multi-Agent LangGraph
 
-A multi-agent LangGraph system that transforms a static Requirements Traceability Matrix (RTM) into a live dependency graph for an FDA Class III IVD device. When any compliance artifact changes, the agent pipeline traverses the full downstream chain, scores the risk, pauses for human review on critical changes, surfaces every obligation that needs action, and routes team-specific briefings to the right subject matter experts.
+A multi-agent LangGraph system that transforms a static Requirements Traceability Matrix (RTM) into a live dependency graph for an FDA Class III IVD device. When any compliance artifact changes, the agent pipeline traverses the full downstream chain, pauses for human review on critical changes, surfaces every obligation that needs action, and routes team-specific briefings to the right subject matter experts.
 
 ---
 
 ## What This Builds
 
-FDA PMA device development requires bidirectional traceability across a chain like:
+FDA PMA device development requires bidirectional traceability across two parallel tracks that merge into a shared design backbone:
 
 ```
-User Needs → Hazards → Risk Controls → Design Inputs → Design Outputs → V&V Protocols → Test Results → CAPA / PMA Supplement Triggers
+Design control (the V-model backbone):
+  User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results
+                                          (verification closes Output ↔ Input;
+                                           validation closes Test Results ↔ User Needs)
+
+Risk management (ISO 14971), running in parallel and feeding into the backbone:
+  Hazards → Risk Controls ──▶ Design Inputs / Design Outputs
+
+Quality system (conditional branch off a nonconforming result):
+  Test Result (fails spec) → CAPA
 ```
+
+Hazards are *not* derived from user needs — they're identified by a separate risk-analysis process and merge into the design chain when a Risk Control becomes a design input or output. CAPA is not a mandatory terminal step; it's triggered only when a Test Result is a nonconformance.
 
 Every edge points from the artifact that, when changed, forces work on the artifact it points to — so a change impact analysis is a straightforward graph traversal downstream. Upstream predecessors are also surfaced for QMSR §820.30(b) bidirectional traceability review.
 
@@ -20,7 +31,7 @@ Most teams manage this in spreadsheets. When a design input changes, someone has
 **Six core capabilities:**
 
 1. **RTM Query Bar** — ask plain-English questions about any node, its history, dependencies, or compliance status directly from the dashboard; the LLM answers against the full live graph context
-2. **Multi-Agent Change Impact** — select any RTM node, describe the change, and the supervisor runs: Change Impact Agent (traverse → classify → report) → risk scoring → escalation gate (if critical) → SME Router Agent (team-specific briefings)
+2. **Multi-Agent Change Impact** — select any RTM node, attest the change type (functional / corrective / documentation-only / no change), describe the change, and the supervisor runs: Change Impact Agent (traverse → classify → report) → risk scoring → escalation gate (if critical) → SME Router Agent (team-specific briefings)
 3. **Critical-Risk Escalation Gate** — changes that invalidate V&V protocols or trigger PMA supplement review are automatically classified as critical; the pipeline pauses and requires a named reviewer to approve or reject before SME briefings are generated
 4. **SME Outreach Flow** — each affected team receives a card with an LLM briefing in their domain vocabulary and an approve button; the human approval gate prevents any status update without documented sign-off
 5. **Interactive Graph Explorer** — vis.js hierarchical dependency graph with double-click node detail panels, same-level edge curving to prevent overlap, and root-node subgraph filtering
@@ -54,76 +65,16 @@ The app opens at `http://localhost:8501`. No database, no Docker, no external se
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                      Streamlit Dashboard                          │
-│   Dashboard │ Change Impact │ Graph Explorer │ Extract │ Audit   │
-└────────────────────────────┬─────────────────────────────────────┘
-                             │ run_full_analysis(graph, node_id, desc,
-                             │                  checkpointer, thread_id)
-             ┌───────────────▼──────────────────────────┐
-             │              Supervisor                   │
-             │          (src/supervisor.py)              │
-             │                                           │
-             │  ① run_impact_agent                       │
-             │  ┌──────────────────────────────────────┐ │
-             │  │       Change Impact Agent            │ │
-             │  │       (src/agent.py)                 │ │
-             │  │  traverse → classify → report        │ │
-             │  │  graph captured in closures          │ │
-             │  │  [1 LLM call — compliance summary]   │ │
-             │  └─────────────────┬────────────────────┘ │
-             │                    │ impact_result         │
-             │  ② score_risk      │                       │
-             │    deterministic risk level               │
-             │    + LLM rationale/concerns               │
-             │                    │                       │
-             │  ③ [conditional] ──┘                       │
-             │    critical ──→ escalation_gate           │
-             │                  LangGraph interrupt()    │
-             │                  ↓ approved               │
-             │    high/low ──→ ④ run_sme_agent           │
-             │  ┌──────────────────────────────────────┐ │
-             │  │        SME Router Agent              │ │
-             │  │        (src/sme_agent.py)            │ │
-             │  │  map_teams → Send × N teams          │ │
-             │  │    → brief_team (parallel)           │ │
-             │  │    → finalize_notifications          │ │
-             │  │  [N LLM calls — run in parallel]     │ │
-             │  └─────────────────┬────────────────────┘ │
-             │                    │ sme_result            │
-             │  ⑤ assemble_report │                       │
-             └────────────────────┴──────────────────────┘
-                             │ ImpactReport
-                             ▼
-             ┌────────────────────────────────────────────────┐
-             │              RTMGraph (NetworkX)               │
-             │   16 nodes · 18 edges (DAG; no cycles)         │
-             │   Chain: UN→DI→DO→VP→TR→CAPA/PM               │
-             │   Read via closure in agent.py                 │
-             └────────────────────────────────────────────────┘
-             ┌───────────────────────────────────┐
-             │     LLM (OpenAI gpt-4o-mini)      │
-             │  Compliance summaries             │
-             │  Risk rationale (structured out.) │
-             │  Team-specific briefings          │
-             │  Document entity extraction       │
-             │  Graph Q&A (dashboard)            │
-             └───────────────────────────────────┘
-```
+![Multi-Agent Pipeline — System Architecture](assets/architecture_diagram.png)
 
 | Layer | Technology | Role |
 |-------|-----------|------|
-| UI | Streamlit + vis.js (via st.components) | Dashboard, interactive graph visualization |
-| Supervisor Agent | LangGraph | Sequences sub-agents, scores risk, owns escalation interrupt |
-| Change Impact Agent | LangGraph (closure over RTMGraph) | traverse → classify → report; serializable state |
-| SME Router Agent | LangGraph (`Send` map-reduce) | `map_teams → Send × N → brief_team` (parallel) `→ finalize_notifications`; LLM calls run concurrently |
-| Risk Scoring | Deterministic + LLM structured output | Classifies risk level; LLM produces rationale only |
-| Escalation Gate | LangGraph `interrupt()` / `Command(resume=...)` | Pauses critical-risk pipeline for human review |
-| Regulatory Source | eCFR API (ecfr.gov) | Verbatim 21 CFR text fetched at startup; 7-day disk cache |
-| Graph Engine | NetworkX | In-memory RTM dependency graph |
-| LLM | OpenAI gpt-4o-mini | Compliance summaries, risk rationale, team briefings, doc extraction, Q&A |
-| Persistence | MemorySaver (session) + JSON (export) | Interrupt/resume state; audit log export |
+| UI | Streamlit + vis.js | The web dashboard, the interactive graph view, and the human approval screens |
+| Supervisor Agent | LangGraph | Runs the agents in order, scores risk, and owns the pause-for-approval gate |
+| Change Impact Agent | LangGraph | Walks the dependency graph from the changed item and labels every affected artifact with its required regulatory action |
+| SME Router Agent | LangGraph (`Send` API) | Routes affected items to the right teams and writes each team's briefing in parallel |
+| Graph Engine | NetworkX | Holds the live dependency graph in memory |
+| LLM | OpenAI gpt-4o-mini | Writes the plain-English summaries: compliance notes, risk rationale, team briefings, document extraction, and dashboard Q&A |
 
 ---
 
@@ -141,11 +92,7 @@ rtm-knowledge-graph-agent/
 │   └── regulations.py        # eCFR fetch + cache; injects verbatim CFR text into LLM prompts
 ├── tests/
 │   ├── conftest.py           # pytest: sets CWD to project root, adds src/ to sys.path
-│   ├── test_graph.py         # 40 tests: seed shape, traversal, completeness, remove/save/load, cycle detection
-│   ├── test_agent.py         # 14 tests: Change Impact agent (LLM mocked via unittest.mock.patch)
-│   ├── test_supervisor.py    # 12 tests: _compute_risk_level — all low/high/critical branches
-│   ├── test_extractor.py     # 25 tests: parse, deduplication, cycle rejection, add_to_graph confidence threshold
-│   └── test_sme_agent.py     # 26 tests: team routing, Send fan-out, brief_team_node, finalize_notifications
+│   └── test_all.py           # 150 tests: graph, agent, supervisor, extractor, SME router (all LLM calls mocked)
 ├── regulations_cache.json    # Auto-generated; verbatim eCFR sections, refreshed every 7 days
 ├── .streamlit/
 │   └── config.toml           # Streamlit theme config
@@ -164,38 +111,22 @@ python3 -m pytest tests/
 
 ## Key Design Decisions
 
-**Why multi-agent?**
-The change impact pipeline, the risk assessment, and the SME notification pipeline have different concerns and different LLM prompting strategies. Separating them into sub-agents makes each independently testable. The supervisor is the only place with awareness of the full pipeline — sub-agents do the work, the supervisor makes the decisions.
+Each decision below leads with *why it matters*, then how it's built.
 
-**Why does the supervisor own the escalation gate, not the impact agent?**
-Escalation is a coordination decision, not a technical one. The supervisor has the full picture after the impact agent completes — only then can it assess whether the combination of flagged nodes rises to critical risk. The checkpointer (required for interrupt/resume) lives in the supervisor graph. Each sub-agent can be called independently without knowledge of escalation.
+**The risk rating is decided by code, not by the model.**
+The most consequential call in the system — is this change dangerous enough to halt everything? — is never left to the AI. The graph's own structure sets a hard ceiling: a change that invalidates verification evidence is *critical*; one that touches a safety control or quality action is *high*; everything else is *low*. The only thing that can lower that ceiling is the reviewer's own attestation of the change type — selected at submit time, not inferred by a model. A *documentation-only* or *no-change* edit downgrades to *low* even when verification evidence sits downstream; any substantive type leaves the ceiling intact. The risk level is therefore a pure function of two auditable facts — the attested change type and the graph topology — that produces the same answer every time and that an auditor can challenge a named human on. The AI is handed the already-decided level and writes only the plain-English rationale and the immediate actions; it never decides or changes the rating. In a regulated system the worst case must be bounded by facts an auditor can verify, not by a model's opinion. *(Code: `_structural_risk_ceiling` sets the bound; `_risk_level_for_change` applies the attested downgrade; `_assess_risk` calls the LLM for explanation only.)*
 
-**Why is risk level deterministic, not LLM-driven?**
-Routing decisions in a regulatory system should be auditable. V&V invalidations and PMA supplement flags have a clear, documented meaning under 21 CFR 814.39 and QMSR §820.30 — there is no ambiguity about whether they require escalation. The LLM's role is to explain the risk in plain language for the reviewer, not to make the routing call. This means: "why was this escalated?" always has a crisp answer traceable to a structural graph property.
+**A real stop, not a warning banner.**
+When a change is rated critical, the pipeline doesn't flash a warning and keep going — it freezes mid-analysis and refuses to continue until a named reviewer approves or rejects, with their decision and notes recorded on the report. Reject, and the run ends: nothing is notified, nothing changes. This holds because the AI never writes to the graph in the first place — across the entire pipeline it only reads and explains. Only a human clicking *approve* in the UI can change a record, and every change is timestamped and attributed — mirroring the FDA's 21 CFR Part 11 rule that a compliance record can't change without documented human approval. The pause is durable too: the system saves its state to disk, so the halt survives the user refreshing or closing the page. *(Code: LangGraph `interrupt()` + `MemorySaver`; resume requires an explicit `Command(resume=...)`.)*
 
-**Why do sub-agents close over the graph instead of receiving it through state?**
-LangGraph state is meant to be serializable (for checkpointing and interrupt/resume). A live NetworkX object cannot be serialized. Passing the graph through closures keeps `AgentState` as plain dicts/strings, which makes the interrupt/resume flow work correctly across Streamlit reruns.
+**The AI's working memory is kept deliberately simple.**
+That durable pause only works if the saved state can be written to disk as plain data — and a live dependency graph can't be. So the graph is held off to the side (handed to each agent when it's built) and never placed in the AI's working state, which carries only text and lists. A useful side effect: each agent can be tested on its own without starting the full pipeline. *(Code: `build_impact_agent(graph)` captures the graph in closures; `AgentState` is strings/lists/dicts only.)*
 
-**Human-in-the-loop gate (compliance status updates)**
-The agent never updates compliance status autonomously. `ImpactReport.approved` is always `False` until a human approves it through the UI. This mirrors 21 CFR Part 11 requirements for documented human approval before any compliance record changes.
+**Three specialists, one coordinator.**
+Tracing impact, scoring risk, and writing team notifications are different jobs with different ways of going wrong, so each is a separate agent that can be tested and swapped independently. Only the supervisor sees the whole pipeline — it runs the agents in order, owns the escalation gate, and assembles the final report. No sub-agent even knows escalation exists, which keeps each one simple and auditable.
 
-**Human-in-the-loop gate (escalation)**
-For critical-risk changes, the pipeline uses LangGraph's `interrupt()` to actually pause mid-execution. The graph state is persisted in a `MemorySaver` stored in `st.session_state`. The reviewer's name, decision, and notes are recorded in the `ImpactReport`. Rejection routes the graph to `END` — no SME briefings are generated and nothing is stored. This is not a UI-layer flag check; the pipeline cannot proceed without a `Command(resume=...)` from the human.
-
-**Confidence scoring on extraction**
-Every LLM-extracted entity has a `confidence` score. Entities below the threshold (default 0.75) get `PENDING_REVIEW` status and are flagged in the UI. Humans decide what to accept.
-
-**Upstream surfacing alongside downstream traversal**
-The Change Impact agent collects both downstream descendants and immediate upstream predecessors of the changed node. Upstream nodes are tagged `direction="upstream"` and rendered in a separate table — they receive a fixed QMSR §820.30(b) bidirectional traceability action and are explicitly excluded from the V&V/CAPA/PMA regulatory flag lists. This matters because a change to a Design Input may also need to be verified against the User Need that drove it.
-
-**Deterministic completeness scoring**
-`RTMGraph.completeness_score()` penalizes six independently weighted categories: orphaned nodes, Design Outputs with no V&V protocol, User Needs with no satisfying Design Input, Design Inputs with no satisfying Design Output, any INVALIDATED node, and any PENDING_REVIEW on a V&V Protocol / CAPA / PMA Supplement Trigger. Each category is independently auditable — the score is not a black box.
-
-**Why parallel SME briefings via `Send`?**
-The original `generate_briefings_node` called each team's LLM sequentially — Bioinformatics, then R&D, then Pathology, then Quality/RA. These calls are completely independent. Replacing the loop with LangGraph's `Send` API fans out one `brief_team_node` per team in parallel. A `_merge_dicts` reducer on `team_briefings` in `SMEState` (annotated with `Annotated[dict, _merge_dicts]`) lets each parallel node write its one key without overwriting others. A final `finalize_notifications_node` runs once after all parallel invocations complete and joins the briefing strings back into each notification dict. The result is N LLM calls → 1 round-trip instead of N sequential round-trips, with no change to the supervisor's interface.
-
-**Why 117 tests with LLM mocking?**
-The regulatory routing logic (`_compute_risk_level`), graph analytics, upstream/downstream classification, extractor deduplication, and SME team routing are the highest-stakes code paths. They are also fully deterministic — no LLM call should control whether a change is escalated or not. Mocking `ChatOpenAI` lets these decision paths be tested without an API key and without flaky LLM responses. The extractor test suite covers the three deduplication matching strategies (`_find_existing_match`) and cycle rejection in `add_to_graph`. The SME test suite covers the `Send` fan-out logic, `brief_team_node` fallback behavior, and `finalize_notifications_node` join correctness independently.
+**Team briefings written in parallel.**
+Each team's briefing is independent of the others, so all of them are generated in a single round-trip rather than one after another — four AI calls in the time of one. *(Code: LangGraph's `Send` API fans the work out; a merge reducer on `team_briefings` lets the parallel results combine without overwriting each other.)*
 
 ---
 
@@ -211,9 +142,7 @@ The app loads a representative RTM for a **high-sensitivity cardiac Troponin I (
 - 2 Test Results (VP-001: Lot 3 non-conformance at 2.6 pg/mL; VP-002: PASS)
 - 2 Risk Controls (ISO 14971 false negative hazard mitigation; CLSI EP07 interference control)
 - 1 CAPA (CAPA-018: Lot 3 LoD non-conformance)
-- 1 PMA Supplement Trigger (PM-001: >20% LoD spec change triggers 21 CFR 814.39 review)
-
-**Pre-loaded scenario:** Tightening LoD from ≤ 2.0 pg/mL to ≤ 1.2 pg/mL triggers a critical-risk impact chain: VP-001 re-execution required (V&V invalidation) + PM-001 flagged (PMA supplement trigger) → escalation gate fires → reviewer must approve before SME notifications go to all four teams.
+**Pre-loaded scenario:** Tightening LoD from ≤ 2.0 pg/mL to ≤ 1.2 pg/mL triggers a critical-risk impact chain: VP-001 re-execution required (V&V invalidation) → escalation gate fires → reviewer must approve before SME notifications go to all four teams.
 
 ---
 
@@ -227,6 +156,5 @@ The following regulations are actively queried at startup via the [eCFR public A
 | 21 CFR §820.40 | FDA QMSR (21 CFR Part 820) | Document controls |
 | 21 CFR §820.100 | FDA QMSR (21 CFR Part 820) | Corrective and preventive action (CAPA) |
 | 21 CFR §820.180 | FDA QMSR (21 CFR Part 820) | General records requirements |
-| 21 CFR §814.39 | 21 CFR Part 814 | PMA supplement requirements |
 | 42 CFR §493.1253 | CLIA (42 CFR Part 493) | Establishment and verification of performance specifications (LoD/LoQ) |
 | 42 CFR §493.1255 | CLIA (42 CFR Part 493) | Calibration and calibration verification |

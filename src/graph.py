@@ -35,7 +35,6 @@ class NodeType(str, Enum):
     HAZARD = "Hazard"
     RISK_CONTROL = "Risk Control"
     CAPA = "CAPA"
-    PMA_SUPPLEMENT_TRIGGER = "PMA Supplement Trigger"
 
 
 # Canonical hierarchy: nodes with a lower level are "upstream" (closer to User Need),
@@ -53,7 +52,6 @@ HIERARCHY_LEVEL: dict[str, int] = {
     NodeType.VV_PROTOCOL: 3,
     NodeType.TEST_RESULT: 4,
     NodeType.CAPA: 5,
-    NodeType.PMA_SUPPLEMENT_TRIGGER: 6,
 }
 
 
@@ -337,6 +335,210 @@ class RTMGraph:
         except nx.NodeNotFound:
             return False
 
+    # A Test Result only closes a verification/validation loop once it represents
+    # completed objective evidence. A pending_review/not_started result is still
+    # in progress, and an invalidated one has been voided — neither closes the loop.
+    _CLOSING_STATUSES: set = {NodeStatus.ACTIVE.value, NodeStatus.APPROVED.value}
+
+    def _is_closing_test_result(self, node_id: str) -> bool:
+        """True if node_id is a Test Result in a completed (closing) status."""
+        data = self._g.nodes[node_id]
+        return (data.get("node_type") == NodeType.TEST_RESULT.value
+                and data.get("status") in self._CLOSING_STATUSES)
+
+    def is_verified(self, node_id: str) -> bool:
+        """
+        Whether a Design Input is verified — i.e. a *completed* Test Result closes
+        the loop with an incoming 'verifies' edge. Per QMSR §820.30(f), design
+        verification confirms the Design Output meets the Design Input via objective
+        evidence; a pending_review/not_started/invalidated result does not count.
+        """
+        if node_id not in self._g:
+            return False
+        if self._g.nodes[node_id].get("node_type") != NodeType.DESIGN_INPUT.value:
+            return False
+        for u, _ in self._g.in_edges(node_id):
+            if (self._g.edges[u, node_id].get("edge_type") == EdgeType.VERIFIES.value
+                    and self._is_closing_test_result(u)):
+                return True
+        return False
+
+    def is_validated(self, node_id: str) -> bool:
+        """
+        Whether a User Need is validated — i.e. its design-control chain reaches a
+        *completed* Test Result (objective evidence). Per QMSR §820.30(g), design
+        validation confirms the device meets user needs. A chain with no downstream
+        Test Result, or only pending/invalidated ones, is an open loop and cannot be
+        considered validated.
+        """
+        if node_id not in self._g:
+            return False
+        if self._g.nodes[node_id].get("node_type") != NodeType.USER_NEED.value:
+            return False
+        return any(
+            self._is_closing_test_result(d)
+            for d in self.downstream_nodes(node_id)
+        )
+
+    def chain_verification_gaps(self) -> list[dict]:
+        """
+        Flag User Needs and Design Inputs whose design-control chain is not a
+        closed verification loop (no Test Result closes the loop). These are the
+        artifacts a status query should surface as "not yet verified/validated."
+
+        Returns a list of dicts, one per open-loop node:
+          id, node_type, title, status, issue (human-readable explanation).
+        """
+        gaps: list[dict] = []
+        for nid, data in self._g.nodes(data=True):
+            ntype = data.get("node_type")
+            if ntype == NodeType.DESIGN_INPUT.value and not self.is_verified(nid):
+                # Distinguish a missing verifying Test Result from one that exists
+                # but is not yet a completed (closing) result.
+                verifiers = [
+                    u for u, _ in self._g.in_edges(nid)
+                    if (self._g.edges[u, nid].get("edge_type") == EdgeType.VERIFIES.value
+                        and self._g.nodes[u].get("node_type") == NodeType.TEST_RESULT.value)
+                ]
+                if verifiers:
+                    statuses = ", ".join(
+                        f"{v} ({self._g.nodes[v].get('status')})" for v in verifiers
+                    )
+                    issue = (
+                        f"Open loop — verifying Test Result(s) {statuses} are not in a "
+                        "completed status (active/approved). Not yet verified "
+                        "(QMSR §820.30(f))."
+                    )
+                else:
+                    issue = (
+                        "Open loop — no Test Result has a 'verifies' edge to this "
+                        "Design Input. Missing test results; not yet verified "
+                        "(QMSR §820.30(f))."
+                    )
+                gaps.append({
+                    "id": nid,
+                    "node_type": ntype,
+                    "title": data.get("title", ""),
+                    "status": data.get("status", ""),
+                    "issue": issue,
+                })
+            elif ntype == NodeType.USER_NEED.value and not self.is_validated(nid):
+                # Distinguish no downstream Test Result at all from one(s) present
+                # but not yet completed.
+                downstream_trs = [
+                    d for d in self.downstream_nodes(nid)
+                    if self._g.nodes[d].get("node_type") == NodeType.TEST_RESULT.value
+                ]
+                if downstream_trs:
+                    statuses = ", ".join(
+                        f"{d} ({self._g.nodes[d].get('status')})" for d in downstream_trs
+                    )
+                    issue = (
+                        f"Open loop — downstream Test Result(s) {statuses} are not in a "
+                        "completed status (active/approved). Not yet validated "
+                        "(QMSR §820.30(g))."
+                    )
+                else:
+                    issue = (
+                        "Open loop — no Test Result exists anywhere in this User "
+                        "Need's downstream chain. Missing test results; not yet "
+                        "validated (QMSR §820.30(g))."
+                    )
+                gaps.append({
+                    "id": nid,
+                    "node_type": ntype,
+                    "title": data.get("title", ""),
+                    "status": data.get("status", ""),
+                    "issue": issue,
+                })
+        return gaps
+
+    def closure_status(self, node_id: str) -> dict | None:
+        """
+        Per-node verification/validation verdict scoped to *this node's own chain*.
+
+        Unlike chain_verification_gaps() (which returns the global list of open
+        loops across every chain), this answers the closure question for one node
+        using only the Test Results reachable within that node's own design-control
+        chain. It exists so a status query about a single artifact cannot borrow a
+        Test Result from an unrelated chain.
+
+        Returns None for node types that carry no closure verdict (anything other
+        than User Need or Design Input). Otherwise a dict:
+          - node_type: "User Need" or "Design Input"
+          - closed: bool  (validated for a User Need / verified for a Design Input)
+          - verdict: human-readable verdict citing the relevant QMSR clause
+          - test_results: list of "{id} ({status})" strings — ONLY the Test Results
+            in this node's own chain (downstream TRs for a User Need; TRs with a
+            'verifies' edge for a Design Input).
+        """
+        if node_id not in self._g:
+            return None
+        ntype = self._g.nodes[node_id].get("node_type")
+
+        if ntype == NodeType.USER_NEED.value:
+            trs = [
+                d for d in self.downstream_nodes(node_id)
+                if self._g.nodes[d].get("node_type") == NodeType.TEST_RESULT.value
+            ]
+            closed = self.is_validated(node_id)
+            if closed:
+                verdict = (
+                    "Validated (QMSR §820.30(g)) — its design-control chain reaches a "
+                    "completed Test Result."
+                )
+            elif trs:
+                verdict = (
+                    "Not yet validated (QMSR §820.30(g)) — open loop; the Test "
+                    "Result(s) in its chain are not in a completed status."
+                )
+            else:
+                verdict = (
+                    "Not yet validated (QMSR §820.30(g)) — open loop; no Test Result "
+                    "exists anywhere in its downstream chain."
+                )
+            return {
+                "node_type": ntype,
+                "closed": closed,
+                "verdict": verdict,
+                "test_results": [
+                    f"{d} ({self._g.nodes[d].get('status')})" for d in trs
+                ],
+            }
+
+        if ntype == NodeType.DESIGN_INPUT.value:
+            verifiers = [
+                u for u, _ in self._g.in_edges(node_id)
+                if (self._g.edges[u, node_id].get("edge_type") == EdgeType.VERIFIES.value
+                    and self._g.nodes[u].get("node_type") == NodeType.TEST_RESULT.value)
+            ]
+            closed = self.is_verified(node_id)
+            if closed:
+                verdict = (
+                    "Verified (QMSR §820.30(f)) — a completed Test Result closes the "
+                    "loop with a 'verifies' edge."
+                )
+            elif verifiers:
+                verdict = (
+                    "Not yet verified (QMSR §820.30(f)) — open loop; the verifying "
+                    "Test Result(s) are not in a completed status."
+                )
+            else:
+                verdict = (
+                    "Not yet verified (QMSR §820.30(f)) — open loop; no Test Result "
+                    "has a 'verifies' edge to this Design Input."
+                )
+            return {
+                "node_type": ntype,
+                "closed": closed,
+                "verdict": verdict,
+                "test_results": [
+                    f"{u} ({self._g.nodes[u].get('status')})" for u in verifiers
+                ],
+            }
+
+        return None
+
     # Per-status readiness weights used by completeness_score and completeness_breakdown.
     # not_started and pending_review are intentionally equal — both represent incomplete
     # artifacts. The score moves when either transitions to active/approved.
@@ -431,15 +633,13 @@ def build_seed_graph() -> RTMGraph:
     (hs-cTnI) immunoassay subject to PMA submission (P240052).
 
     Full dependency chain (edges flow in change-impact direction):
-    User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results
-                                                                  → CAPAs → PMA Supplement Triggers
+    User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results → CAPAs
 
     Pre-loaded change scenario: tightening DI-001 LoD from ≤ 2.0 pg/mL to ≤ 1.2 pg/mL
-    triggers the max-severity chain: VP-001 invalidation → CAPA-018 review →
-    PM-001 PMA supplement flag.
+    triggers the max-severity chain: VP-001 invalidation → CAPA-018 review.
 
     Regulatory framework: FDA QMSR (21 CFR Part 820, effective Feb 2, 2026),
-    ISO 13485:2016, ISO 14971:2019, 21 CFR Part 814 (PMA), CLSI EP17-A2/EP05-A3.
+    ISO 13485:2016, ISO 14971:2019, CLSI EP17-A2/EP05-A3.
     """
     g = RTMGraph()
 
@@ -523,15 +723,6 @@ def build_seed_graph() -> RTMGraph:
                "Corrective action: revised conjugation SOP and tightened incoming QC criteria.",
                status=NodeStatus.PENDING_REVIEW)
 
-    # --- PMA Supplement Trigger ---
-    g.add_node("PM-001", NodeType.PMA_SUPPLEMENT_TRIGGER, "PMA Supplement Trigger — LoD Spec Change",
-               "If the approved LoD specification (DI-001) tightens by >20% from the PMA-approved "
-               "value of 2.0 pg/mL, or if post-market LoD verification fails at any manufacturing "
-               "site, a Prior Approval Supplement (PAS) is required per 21 CFR 814.39. "
-               "A 30-Day Notice may apply for manufacturing process changes per 21 CFR 814.39(f).",
-               metadata={"threshold_pct": 0.20, "metric": "LoD_pg_mL",
-                         "approved_lod_pg_ml": 2.0, "regulation": "21 CFR 814.39"})
-
     # --- Edges ---
     g.add_edge("UN-001", "DI-001", EdgeType.LINKED_TO)
     g.add_edge("UN-002", "DI-002", EdgeType.LINKED_TO)
@@ -552,7 +743,6 @@ def build_seed_graph() -> RTMGraph:
     g.add_edge("RC-002", "DO-001", EdgeType.LINKED_TO)
 
     g.add_edge("TR-001A", "CAPA-018", EdgeType.TRIGGERS)
-    g.add_edge("CAPA-018", "PM-001", EdgeType.TRIGGERS)
 
     g.add_edge("TR-001A", "DI-001", EdgeType.VERIFIES)
     g.add_edge("TR-002A", "DI-002", EdgeType.VERIFIES)

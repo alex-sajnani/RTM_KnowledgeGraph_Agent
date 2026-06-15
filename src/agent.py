@@ -72,11 +72,12 @@ class ImpactReport:
     timestamp: str
     impacted_nodes: list[ImpactedNode]
     vv_invalidations: list[str]
-    pma_supplement_flags: list[str]
     capa_triggers: list[str]
     llm_summary: str
     sme_notifications: list = field(default_factory=list)
     team_briefings: dict = field(default_factory=dict)
+    # Reviewer-attested change type; drives the deterministic risk downgrade.
+    change_type: str = "Functional change"
     # Risk assessment — populated by the supervisor after this agent completes
     risk_level: str = "low"          # "low" | "high" | "critical"
     risk_rationale: str = ""
@@ -100,7 +101,6 @@ class AgentState(TypedDict):
     upstream_ids: list[str]
     impacted_nodes: list[dict]
     vv_invalidations: list[str]
-    pma_supplement_flags: list[str]
     capa_triggers: list[str]
     llm_summary: str
 
@@ -139,7 +139,16 @@ def build_impact_agent(graph: RTMGraph) -> Any:
         direction="downstream" or direction="upstream".
         """
         changed_id = state["changed_node_id"]
-        downstream_ids = graph.downstream_nodes(changed_id)
+        changed_level = HIERARCHY_LEVEL.get(
+            graph.get_node(changed_id).get("node_type", ""), 0
+        )
+        # Exclude nodes hierarchically above the changed node — they appear in
+        # nx.descendants only via feedback edges (e.g. VERIFIES) and belong in
+        # the upstream section, not downstream obligations.
+        downstream_ids = [
+            nid for nid in graph.downstream_nodes(changed_id)
+            if HIERARCHY_LEVEL.get(graph.get_node(nid).get("node_type", ""), 0) >= changed_level
+        ]
         impacted = []
 
         for target_id in downstream_ids:
@@ -164,28 +173,29 @@ def build_impact_agent(graph: RTMGraph) -> Any:
             except Exception:
                 continue
 
-        # Upstream = direct predecessors whose hierarchy level is <= the changed
-        # node's level (i.e. they are closer to User Need in the RTM chain).
-        # Predecessors at a *higher* level are feedback edges (e.g. a Test Result
-        # VALIDATES a Design Input) and are excluded — they belong downstream.
-        changed_level = HIERARCHY_LEVEL.get(
-            graph.get_node(changed_id).get("node_type", ""), 0
-        )
+        # Upstream = all ancestors at a strictly lower hierarchy level than the
+        # changed node. Uses full BFS (not just direct predecessors) so multi-hop
+        # ancestors like Design Inputs feeding into a V&V Protocol via a Design
+        # Output are surfaced for bidirectional traceability per QMSR §820.30(b).
         upstream_ids = [
-            p for p in graph._g.predecessors(changed_id)
-            if HIERARCHY_LEVEL.get(graph.get_node(p).get("node_type", ""), 0) <= changed_level
+            nid for nid in graph.upstream_nodes(changed_id)
+            if HIERARCHY_LEVEL.get(graph.get_node(nid).get("node_type", ""), 0) < changed_level
         ]
         for pred_id in upstream_ids:
             try:
                 node_data = graph.get_node(pred_id)
-                edge_data = graph._g.edges[pred_id, changed_id]
+                path = graph.impact_path(pred_id, changed_id)
+                edge_types = []
+                for i in range(len(path) - 1):
+                    edge_data = graph._g.edges[path[i], path[i + 1]]
+                    edge_types.append(edge_data.get("edge_type", "linked_to"))
                 impacted.append({
                     "node_id": pred_id,
                     "node_type": node_data["node_type"],
                     "title": node_data["title"],
                     "current_status": node_data["status"],
-                    "edge_path": [pred_id, changed_id],
-                    "edge_types_on_path": [edge_data.get("edge_type", "linked_to")],
+                    "edge_path": path,
+                    "edge_types_on_path": edge_types,
                     "direction": "upstream",
                 })
             except Exception:
@@ -209,7 +219,6 @@ def build_impact_agent(graph: RTMGraph) -> Any:
         chain is handled by score_risk_node in the supervisor.
         """
         vv_invalidations = []
-        pma_supplement_flags = []
         capa_triggers = []
         scored = []
 
@@ -230,17 +239,40 @@ def build_impact_agent(graph: RTMGraph) -> Any:
             except ValueError:
                 node_type = NodeType.USER_NEED
 
+            # A V&V node only carries a verification basis that *can* be
+            # invalidated if it has actually been executed/produced. A
+            # not_started node (e.g. a required placeholder or planned future
+            # work) has no existing data — there is nothing to invalidate, so
+            # it must not drive the critical-risk ceiling. It is simply authored
+            # against the current spec when the team gets to it.
+            has_vv_data = item.get("current_status") != NodeStatus.NOT_STARTED.value
+
             if node_type == NodeType.VV_PROTOCOL:
-                action = (
-                    "Re-execute V&V protocol — change to upstream design output may invalidate "
-                    "the verification or validation basis per QMSR §820.30(f)/(g)."
-                )
-                vv_invalidations.append(item["node_id"])
+                if has_vv_data:
+                    action = (
+                        "Re-execute V&V protocol — change to upstream design output may invalidate "
+                        "the verification or validation basis per QMSR §820.30(f)/(g)."
+                    )
+                    vv_invalidations.append(item["node_id"])
+                else:
+                    action = (
+                        "No existing verification basis to invalidate — this V&V protocol has not "
+                        "been executed. Author and execute it against the updated specification "
+                        "per QMSR §820.30(f)/(g)."
+                    )
             elif node_type == NodeType.TEST_RESULT:
-                action = (
-                    "Review test result validity — upstream V&V protocol or design output has changed. "
-                    "Assess whether existing data remains valid under the new specification."
-                )
+                if has_vv_data:
+                    action = (
+                        "Invalidate test result — upstream V&V protocol or design output has changed. "
+                        "Existing data was generated against a superseded specification and cannot be "
+                        "relied upon until the protocol is re-executed per QMSR §820.30(f)/(g)."
+                    )
+                    vv_invalidations.append(item["node_id"])
+                else:
+                    action = (
+                        "No existing test data to invalidate — this test result has not been "
+                        "generated. Produce it against the updated protocol per QMSR §820.30(f)/(g)."
+                    )
             elif node_type == NodeType.HAZARD:
                 action = (
                     "Review hazard analysis under ISO 14971:2019 — an upstream change may alter "
@@ -258,13 +290,6 @@ def build_impact_agent(graph: RTMGraph) -> Any:
                     "modified by an upstream design change. Update corrective action plan if warranted."
                 )
                 capa_triggers.append(item["node_id"])
-            elif node_type == NodeType.PMA_SUPPLEMENT_TRIGGER:
-                action = (
-                    "PMA supplement trigger review required — performance specification chain has "
-                    "changed. Assess whether a Prior Approval Supplement (PAS) or 30-Day Notice "
-                    "is required under 21 CFR 814.39."
-                )
-                pma_supplement_flags.append(item["node_id"])
             elif node_type == NodeType.DESIGN_OUTPUT:
                 action = (
                     "Review design output specification per QMSR §820.30(d) — upstream design "
@@ -284,7 +309,6 @@ def build_impact_agent(graph: RTMGraph) -> Any:
             **state,
             "impacted_nodes": scored,
             "vv_invalidations": vv_invalidations,
-            "pma_supplement_flags": pma_supplement_flags,
             "capa_triggers": capa_triggers,
         }
 
@@ -316,7 +340,7 @@ def build_impact_agent(graph: RTMGraph) -> Any:
         ]
         impact_text = "\n".join(impact_lines) if impact_lines else "No downstream impacts detected."
 
-        reg_context = build_prompt_context(_regulations, ["820.30", "820.100", "814.39", "493.1253", "493.1255"])
+        reg_context = build_prompt_context(_regulations, ["820.30", "820.100", "493.1253", "493.1255"])
         system_prompt = (
             "You are a regulatory affairs assistant helping a QA team understand the downstream "
             "compliance impact of a change to an IVD assay Requirements Traceability Matrix (RTM). "
@@ -337,11 +361,19 @@ def build_impact_agent(graph: RTMGraph) -> Any:
             f"Downstream impact analysis identified {len(state['impacted_nodes'])} affected nodes:\n\n"
             f"{impact_text}\n\n"
             f"V&V protocols requiring re-execution: {state['vv_invalidations'] or 'None'}\n"
-            f"PMA supplement triggers flagged: {state['pma_supplement_flags'] or 'None'}\n"
             f"CAPAs requiring review: {state['capa_triggers'] or 'None'}\n\n"
+            f"CRITICAL INSTRUCTION: Read the change description carefully before writing your summary. "
+            f"If the change description indicates that no substantive change occurred — for example, "
+            f"phrases like 'nothing has been impacted', 'no change made', 'documentation only', "
+            f"'no functional change', or similar — you MUST explicitly state that the structural "
+            f"dependencies listed above exist in the RTM but the described change does NOT trigger "
+            f"any of those obligations. Do NOT describe downstream actions as urgent or required "
+            f"when the change description says nothing changed.\n\n"
             f"Write a 3–5 sentence plain-English compliance summary for the QA/RA team. "
-            f"Focus on what needs to be acted on first and whether a PMA supplement submission "
-            f"may be required under 21 CFR 814.39."
+            f"Calibrate the tone and urgency to match what the change description actually says happened. "
+            f"IMPORTANT: Only reference the node IDs, titles, and artifacts explicitly listed above. "
+            f"Do not introduce, infer, or mention any other nodes, document numbers, or artifacts "
+            f"that are not in the provided impact list."
         )
 
         llm_summary = ""
@@ -358,7 +390,7 @@ def build_impact_agent(graph: RTMGraph) -> Any:
                 f"[LLM unavailable — check OPENAI_API_KEY] "
                 f"Manual review required for {len(state['impacted_nodes'])} downstream nodes. "
                 f"V&V invalidations: {state['vv_invalidations']}. "
-                f"PMA supplement flags: {state['pma_supplement_flags']}."
+                f"CAPA triggers: {state['capa_triggers']}."
             )
 
         return {**state, "llm_summary": llm_summary}
@@ -415,7 +447,6 @@ def run_impact_analysis(
         "upstream_ids": [],
         "impacted_nodes": [],
         "vv_invalidations": [],
-        "pma_supplement_flags": [],
         "capa_triggers": [],
         "llm_summary": "",
     }
@@ -448,7 +479,6 @@ def run_impact_analysis(
         timestamp=datetime.now(timezone.utc).isoformat(),
         impacted_nodes=impacted,
         vv_invalidations=result["vv_invalidations"],
-        pma_supplement_flags=result["pma_supplement_flags"],
         capa_triggers=result["capa_triggers"],
         llm_summary=result["llm_summary"],
         approved=False,

@@ -19,6 +19,7 @@ import sys
 import json
 import io
 import csv
+import html
 import tempfile
 from pathlib import Path
 
@@ -41,8 +42,8 @@ if "OPENAI_API_KEY" not in os.environ:
 # Add src/ to path (bare imports inside src/)
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from graph import RTMGraph, NodeType, NodeStatus, EdgeType, build_seed_graph
-from supervisor import build_supervisor, run_full_analysis
+from graph import RTMGraph, NodeType, NodeStatus, EdgeType, HIERARCHY_LEVEL, build_seed_graph
+from supervisor import build_supervisor, run_full_analysis, CHANGE_TYPES
 from langgraph.checkpoint.memory import MemorySaver
 from agent import ImpactReport
 from extractor import RTMDocumentExtractor, SAMPLE_DOCUMENTS
@@ -87,6 +88,16 @@ section[data-testid="stSidebar"] {
     height:      100dvh !important;
     overflow-y:  auto !important;
 }
+
+/* Center the graph-stat metrics and completeness caption in the sidebar */
+section[data-testid="stSidebar"] [data-testid="stMetric"] { text-align: center; }
+section[data-testid="stSidebar"] [data-testid="stMetricLabel"],
+section[data-testid="stSidebar"] [data-testid="stMetricValue"] {
+    display: flex !important;
+    justify-content: center !important;
+    text-align: center !important;
+}
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] { text-align: center; }
 </style>
 """)
 
@@ -99,7 +110,9 @@ if "graph" not in st.session_state:
 if "audit_log" not in st.session_state:
     st.session_state.audit_log = []
 if "impact_reports" not in st.session_state:
-    st.session_state.impact_reports = []
+    st.session_state.impact_reports = []          # stored/approved reports (dashboard reads these)
+if "current_impact_report" not in st.session_state:
+    st.session_state.current_impact_report = None  # latest run's working report (display only)
 if "extraction_results" not in st.session_state:
     st.session_state.extraction_results = []
 if "notified_teams" not in st.session_state:
@@ -178,11 +191,41 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
 
     nodes = graph.all_nodes()
     edges = graph.all_edges()
+    node_by_id = {n["id"]: n for n in nodes}
 
-    node_text = "\n".join(
-        f"[{n['node_type']}] {n['id']}: {n['title']} (status: {n['status']})\n  {n.get('description','')[:300]}"
-        for n in nodes
-    )
+    def _node_line(n: dict) -> str:
+        line = (
+            f"[{n['node_type']}] {n['id']}: {n['title']} (status: {n['status']})\n"
+            f"  {n.get('description','')[:300]}"
+        )
+        # Chain-scoped closure verdict for User Needs and Design Inputs, so a status
+        # question about one artifact cannot borrow a Test Result from another chain.
+        closure = graph.closure_status(n["id"])
+        if closure:
+            trs = ", ".join(closure["test_results"]) or "none"
+            line += (
+                f"\n  V&V STATUS: {closure['verdict']} "
+                f"Relevant Test Results for {n['id']}: {trs}."
+            )
+        # Full connected chain: every node a change here could propagate to (the
+        # downstream closure). This is the authoritative membership list for "what
+        # is in <node>'s chain" — so a chain/status answer surfaces ALL impacted
+        # artifacts (e.g. an open CAPA triggered off a downstream Test Result), not
+        # just the V&V-loop endpoints.
+        downstream = graph.downstream_nodes(n["id"])
+        if downstream:
+            members = ", ".join(
+                f"{d} [{node_by_id[d]['node_type']}] ({node_by_id[d]['status']})"
+                for d in downstream
+                if d in node_by_id
+            )
+            line += (
+                f"\n  CONNECTED CHAIN (downstream nodes a change to {n['id']} may "
+                f"impact): {members}"
+            )
+        return line
+
+    node_text = "\n".join(_node_line(n) for n in nodes)
     edge_text = "\n".join(
         f"  {e['source']} --{e['edge_type']}--> {e['target']}"
         for e in edges
@@ -195,25 +238,103 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
     )
     impact_text = ""
     for r in reversed(impact_reports[-3:]):
-        impact_text += (
-            f"\n- Impact run on {r.changed_node_id} ({r.changed_node_title[:40]}): "
-            f"{len(r.impacted_nodes)} nodes affected, "
-            f"V&V invalidations={r.vv_invalidations}, PMA flags={r.pma_supplement_flags}, CAPAs={r.capa_triggers}."
+        impacted_ids = ", ".join(
+            getattr(n, "node_id", "") for n in r.impacted_nodes
+        ) or "none"
+        concerns = "; ".join(r.immediate_concerns) if r.immediate_concerns else "none"
+        escalation = (
+            f"escalated to {r.escalation_reviewer or 'reviewer'}"
+            f"{' (approved)' if r.approved else ' (pending/declined)'}"
+            if r.escalation_required else "no escalation required"
         )
+        state_label = "approved & stored" if r.approved else "working (pending final approval)"
+        impact_text += (
+            f"\n- Impact run on {r.changed_node_id} ({r.changed_node_title[:40]}) "
+            f"at {r.timestamp[:19]} [{state_label}]:"
+            f"\n    Change description: {r.change_description}"
+            f"\n    Risk level: {r.risk_level.upper()} — {r.risk_rationale or 'no rationale recorded'}"
+            f"\n    Immediate concerns: {concerns}"
+            f"\n    {len(r.impacted_nodes)} nodes affected: {impacted_ids}"
+            f"\n    V&V invalidations={r.vv_invalidations or 'none'}, "
+            f"CAPAs={r.capa_triggers or 'none'}"
+            f"\n    Escalation: {escalation}"
+        )
+
+    # V&V closure gaps — Design Inputs / User Needs whose chain is an open loop
+    # (no Test Result closes verification/validation). Surfaced so any status
+    # question correctly flags unverified/unvalidated chains.
+    gaps = graph.chain_verification_gaps()
+    if gaps:
+        gap_text = "\n".join(
+            f"  [{g['node_type']}] {g['id']}: {g['title']} (status: {g['status']}) — {g['issue']}"
+            for g in gaps
+        )
+    else:
+        gap_text = "  None — every User Need and Design Input has closing Test Result evidence."
 
     system_prompt = (
         "You are an expert regulatory affairs analyst for a medical device company. "
         "You have full access to the Requirements Traceability Matrix (RTM) for an "
         "hs-cTnI immunoassay (PMA P240052) including all nodes, edges, audit history, "
-        "and recent change impact analyses. "
+        "recent change impact analyses, and a V&V closure analysis. "
         "Answer questions about specific nodes, their upstream/downstream dependencies, "
         "status history, compliance flags, and relationships. "
-        "Be concise and factual. Cite node IDs and edge types directly. "
-        "Use regulatory terminology (QMSR §820.30, ISO 14971, 21 CFR Part 814) where relevant."
+        "When asked about the status of a specific User Need or Design Input, the "
+        "AUTHORITATIVE verdict is the per-node 'V&V STATUS' line "
+        "attached to that node in the RTM NODES list. Use it verbatim. It is scoped "
+        "to that node's OWN design-control chain. CRITICAL: never attribute a Test "
+        "Result to a node unless that Test Result is listed in that node's own "
+        "V&V STATUS line. Different User Needs have separate chains — e.g. a pending "
+        "Test Result in UN-001's chain says nothing about UN-002's validation. Do "
+        "NOT pull a Test Result from another chain to explain a node's status. "
+        "A design-control chain is only 'closed' when a completed Test Result "
+        "verifies its Design Input (QMSR §820.30(f)) and validates its User Need "
+        "(QMSR §820.30(g)). The V&V CLOSURE GAPS section below is a GLOBAL list of "
+        "open loops across ALL chains — use it only for graph-wide questions, never "
+        "to infer a specific node's status (defer to that node's V&V STATUS line). "
+        "CONNECTED CHAIN COMPLETENESS: when a question asks about a node or its "
+        "chain, the chain is that node's CONNECTED CHAIN line — every downstream "
+        "node a change there could impact, NOT just the Design Input / Test Result "
+        "V&V endpoints. You MUST account for every connected node that is in a "
+        "material status and surface it as its own bullet: any CAPA, any node that "
+        "is invalidated / pending_review / not_started, and any node flagged by a "
+        "recent impact analysis. An existing open CAPA hanging off a downstream "
+        "Test Result (e.g. a non-conformance corrective action) is one of the most "
+        "important facts about a chain's status — never omit it. Only nodes in a "
+        "fully completed status (active/approved) with nothing else to report may "
+        "be folded out. "
+        "RECENT IMPACT ANALYSES are part of a chain's current status, not separate "
+        "trivia. When a question asks about a node or a chain, you MUST check the "
+        "RECENT IMPACT ANALYSES section for any run whose changed node OR affected "
+        "nodes fall in that chain, and surface it: name the change, its risk level, "
+        "the affected nodes, and any V&V invalidations or CAPAs. A working "
+        "(not-yet-approved) analysis is still a finding the reviewer needs to see — "
+        "report it and note its approval state. Do not omit a relevant impact "
+        "analysis just because the question used the word 'status'. "
+        "Cite node IDs and edge types directly. "
+        "Use regulatory terminology (QMSR §820.30, ISO 14971, 21 CFR Part 814) where relevant.\n\n"
+        "OUTPUT FORMAT — keep it tight: aim for under 120 words. No opening "
+        "preamble ('The status for ... is as follows') and no closing summary "
+        "sentence ('Therefore, the chain remains...'). Lead with a one-line verdict "
+        "(e.g. 'UN-001 chain: OPEN — not validated'). Then at most one short bullet "
+        "per relevant node: '`ID` — <fact>' in a single line, no nested sub-bullets. "
+        "Fold any relevant impact analysis into one bullet, not a paragraph. State "
+        "each fact once; do not restate a Test Result's status under every node. "
+        "Omit only nodes in a fully completed (active/approved) status with nothing "
+        "else to report; always keep connected chain members in a material status "
+        "(any CAPA, or anything invalidated / pending_review / not_started).\n\n"
+        "STRICT GROUNDING RULE: You may ONLY refer to nodes that appear in the RTM NODES "
+        "list provided in the user message. Those node IDs and titles are the complete and "
+        "authoritative set of artifacts in the current graph. Never invent, assume, or "
+        "reference any node, ID, title, or edge that is not explicitly present in that list. "
+        "Do not fabricate node IDs (e.g. do not guess that a 'DI-002' or 'TR-005' exists "
+        "unless it is listed). If the answer requires a node that is not in the list, state "
+        "plainly that no such node exists in the current graph rather than making one up."
     )
     user_prompt = (
         f"RTM NODES:\n{node_text}\n\n"
         f"RTM EDGES:\n{edge_text}\n\n"
+        f"V&V CLOSURE GAPS (open-loop chains missing Test Result evidence):\n{gap_text}\n\n"
         f"AUDIT LOG (last 25 events):\n{audit_text}\n\n"
         f"RECENT IMPACT ANALYSES:{impact_text or ' none'}\n\n"
         f"QUESTION: {question}"
@@ -244,10 +365,12 @@ def _extraction_team_briefing(team: str, nodes: list, doc_name: str) -> str:
         "Write a concise 2–3 sentence briefing explaining what is being proposed, "
         "what they should verify, and any risks or gaps they should flag before approving."
     )
+    from sme_agent import QUANTITATIVE_GUARDRAIL
     user_prompt = (
         f"Source document: {doc_name}\n\n"
         f"Proposed RTM additions for {team} review:\n{node_lines}\n\n"
-        f"Brief the {team} team."
+        f"Brief the {team} team.\n\n"
+        f"{QUANTITATIVE_GUARDRAIL}"
     )
     try:
         llm = ChatOpenAI(
@@ -263,6 +386,53 @@ def _extraction_team_briefing(team: str, nodes: list, doc_name: str) -> str:
         )
 
 
+def _render_wrapped_table(rows: list[dict], wrap_columns: set[str] | None = None) -> None:
+    """Render list-of-dict rows as an HTML table whose long cells wrap.
+
+    st.dataframe (Streamlit 1.57) truncates cells with an ellipsis and exposes no
+    text-wrap option, so columns of long free-text (e.g. Required Action, Review
+    Obligation) get cut off. This renders a styled HTML table instead, wrapping
+    only the columns named in ``wrap_columns`` and keeping the rest on one line.
+
+    Args:
+        rows: List of row dicts; keys of the first row define the column order.
+        wrap_columns: Column names whose cells should wrap onto multiple lines.
+    """
+    if not rows:
+        return
+    columns = list(rows[0].keys())
+    wrap = wrap_columns or set()
+
+    header_html = "".join(f"<th>{html.escape(str(c))}</th>" for c in columns)
+    body_html = ""
+    for row in rows:
+        cells = ""
+        for c in columns:
+            cls = "wrap" if c in wrap else "nowrap"
+            cells += f'<td class="{cls}">{html.escape(str(row.get(c, "")))}</td>'
+        body_html += f"<tr>{cells}</tr>"
+
+    st.markdown(
+        f"""
+        <style>
+        .rtm-table {{ width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-bottom: 1rem; }}
+        .rtm-table th, .rtm-table td {{
+            text-align: left; padding: 0.5rem 0.75rem; vertical-align: top;
+            border-bottom: 1px solid rgba(128,128,128,0.2);
+        }}
+        .rtm-table th {{ font-weight: 600; background: rgba(128,128,128,0.06); white-space: nowrap; }}
+        .rtm-table td.wrap {{ white-space: normal; overflow-wrap: anywhere; }}
+        .rtm-table td.nowrap {{ white-space: nowrap; }}
+        </style>
+        <table class="rtm-table">
+            <thead><tr>{header_html}</tr></thead>
+            <tbody>{body_html}</tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 COLOR_MAP = {
     "User Need":        "#5e81ac",  # Nord frost — dark blue
     "Design Input":     "#81a1c1",  # Nord frost — blue
@@ -272,7 +442,6 @@ COLOR_MAP = {
     "Hazard":           "#bf616a",  # Nord aurora — red (risk)
     "Risk Control":     "#b48ead",  # Nord aurora — purple
     "CAPA":             "#d08770",  # Nord aurora — orange
-    "PMA Supplement Trigger": "#bf616a",  # Nord aurora — red
 }
 
 EDGE_COLORS = {
@@ -292,7 +461,6 @@ NODE_TYPE_LEVEL = {
     "V&V Protocol":           3,
     "Test Result":            4,
     "CAPA":                   5,
-    "PMA Supplement Trigger": 6,
 }
 
 # ---------------------------------------------------------------------------
@@ -325,9 +493,10 @@ with st.sidebar:
     # Graph stats
     all_nodes = g.all_nodes()
     pending = sum(1 for n in all_nodes if n["status"] == "pending_review")
-    c1, c2 = st.columns(2)
-    c1.metric("Nodes", len(all_nodes))
-    c2.metric("Pending", pending)
+    not_started = sum(1 for n in all_nodes if n["status"] == "not_started")
+    st.metric("Nodes", len(all_nodes))
+    st.metric("Pending", pending)
+    st.metric("Not Started", not_started)
     st.caption(f"Completeness: **{g.completeness_score()}%**")
 
 # ===========================================================================
@@ -351,13 +520,20 @@ if st.session_state.current_page == "dashboard":
             prompt_submit = st.button("Send", type="primary", icon=":material/send:")
 
     if prompt_submit and prompt_text:
+        # Include the current working report (run but not yet persisted through the
+        # final approval gate) so a freshly-run analysis is queryable from the chat
+        # without waiting on approval. Deduped by identity against the persisted list.
+        reports_for_chat = list(st.session_state.impact_reports)
+        working = st.session_state.current_impact_report
+        if working is not None and working not in reports_for_chat:
+            reports_for_chat.append(working)
         with st.spinner("Querying RTM..."):
             st.session_state.dashboard_query_result = {
                 "question": prompt_text,
                 "answer": _query_graph(
                     prompt_text, g,
                     st.session_state.audit_log,
-                    st.session_state.impact_reports,
+                    reports_for_chat,
                 ),
             }
         st.rerun()
@@ -435,10 +611,13 @@ if st.session_state.current_page == "dashboard":
 
     with wb_tab2:
         _status_changed = False
-        for node in sorted(g.all_nodes(), key=lambda x: x["node_type"]):
+
+        def _render_artifact_row(node: dict, indent: bool = False) -> bool:
+            """Render one artifact row with an editable status; return True if the status changed."""
             cols = st.columns([4, 2, 2])
             with cols[0]:
-                st.markdown(f"**{node['id']}** {node['title'][:45]}")
+                prefix = "&nbsp;&nbsp;&nbsp;&nbsp;↳ " if indent else ""
+                st.markdown(f"{prefix}**{node['id']}** {node['title'][:45]}", unsafe_allow_html=True)
             with cols[1]:
                 st.caption(node["node_type"])
             with cols[2]:
@@ -461,9 +640,66 @@ if st.session_state.current_page == "dashboard":
                             "new_status": new_status,
                             "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                         })
-                        _status_changed = True
+                        return True
                 else:
                     status_badge(current_status)
+            return False
+
+        # Group artifacts under their parent User Need, with descendants nested below.
+        # A node is assigned to a User Need if it is downstream of that need, OR — for
+        # parallel root tracks like Hazard/Risk Control that have no User Need ancestor —
+        # if the node's own downstream chain converges into that need's chain. Each node
+        # is assigned once (first matching User Need); truly disconnected nodes fall into
+        # "Ungrouped".
+        all_nodes_by_id = {n["id"]: n for n in g.all_nodes()}
+        user_needs = sorted(
+            (n for n in all_nodes_by_id.values() if n["node_type"] == NodeType.USER_NEED.value),
+            key=lambda x: x["id"],
+        )
+
+        def _descendant_sort_key(node: dict) -> tuple[int, str]:
+            return (HIERARCHY_LEVEL.get(node["node_type"], 99), node["id"])
+
+        # Pass 1 — each User Need's membership set (itself + everything downstream of it).
+        un_members: dict[str, set[str]] = {}
+        assigned: dict[str, str] = {}  # node_id -> user_need_id
+        for un in user_needs:
+            members = {un["id"]} | {nid for nid in g.downstream_nodes(un["id"]) if nid in all_nodes_by_id}
+            un_members[un["id"]] = members
+            for nid in members:
+                assigned.setdefault(nid, un["id"])
+
+        # Pass 2 — attach unassigned feeder nodes (e.g. Hazard/Risk Control roots) to the
+        # first User Need whose chain their downstream chain converges into.
+        for nid, node in all_nodes_by_id.items():
+            if nid in assigned:
+                continue
+            chain = {nid} | {d for d in g.downstream_nodes(nid) if d in all_nodes_by_id}
+            for un in user_needs:
+                if chain & un_members[un["id"]]:
+                    assigned[nid] = un["id"]
+                    break
+
+        for un in user_needs:
+            group_ids = [nid for nid, owner in assigned.items() if owner == un["id"] and nid != un["id"]]
+            st.markdown(f"#### {un['id']} — {un['title'][:60]}")
+            if _render_artifact_row(un):
+                _status_changed = True
+            for node in sorted((all_nodes_by_id[nid] for nid in group_ids), key=_descendant_sort_key):
+                if _render_artifact_row(node, indent=True):
+                    _status_changed = True
+            st.divider()
+
+        ungrouped = sorted(
+            (n for nid, n in all_nodes_by_id.items() if nid not in assigned),
+            key=_descendant_sort_key,
+        )
+        if ungrouped:
+            st.markdown("#### Ungrouped")
+            for node in ungrouped:
+                if _render_artifact_row(node):
+                    _status_changed = True
+
         if _status_changed:
             st.rerun()
         st.components.v1.html("""
@@ -553,6 +789,14 @@ elif st.session_state.current_page == "change_impact":
     with col_left:
         selected_label = st.selectbox("Select changed RTM node", list(node_options.keys()))
         selected_node_id = node_options[selected_label]
+        change_type = st.selectbox(
+            "Change type",
+            CHANGE_TYPES,
+            help="The reviewer's attestation of what kind of change this is. "
+                 "Documentation-only and No-change downgrade the risk to LOW even when "
+                 "verification evidence is topologically downstream — an auditable, "
+                 "reproducible decision the model never overrides.",
+        )
 
     with col_right:
         prefill = st.session_state.pop("prefill_change", "") if "prefill_change" in st.session_state else ""
@@ -567,26 +811,28 @@ elif st.session_state.current_page == "change_impact":
     run_btn = st.button("Run Impact Analysis", type="primary", icon=":material/bolt:")
 
     if run_btn and change_desc:
+        # Each run replaces the displayed output. The working report lives in
+        # current_impact_report; it is only persisted to impact_reports (which the
+        # dashboard reads) once a human approves it via the approval gate below.
+        st.session_state.current_impact_report = None
+        st.session_state.pending_escalation = None
+        st.session_state.escalation_thread_id = None
         with st.spinner("Running multi-agent analysis (Change Impact + Risk Scoring + SME Router)..."):
             report, interrupt_payload, tid = run_full_analysis(
                 g, selected_node_id, change_desc,
                 checkpointer=st.session_state.checkpointer,
                 supervisor=st.session_state.supervisor,
+                change_type=change_type,
             )
         if interrupt_payload:
             st.session_state.pending_escalation = interrupt_payload
             st.session_state.escalation_thread_id = tid
             st.rerun()
         elif report:
-            st.session_state.impact_reports.append(report)
-            st.session_state.audit_log.append({
-                "event": "impact_analysis_run",
-                "node": selected_node_id,
-                "timestamp": report.timestamp,
-                "impacted_count": len(report.impacted_nodes),
-                "risk_level": report.risk_level,
-                "sme_teams": list(report.team_briefings.keys()),
-            })
+            # Hold the result for display only. Nothing is logged or stored until a
+            # human approves it at the approval gate, so abandoned/unapproved runs
+            # leave no queryable trace.
+            st.session_state.current_impact_report = report
 
     # ── Escalation gate UI ────────────────────────────────────────────────────
     if st.session_state.pending_escalation:
@@ -608,10 +854,6 @@ elif st.session_state.current_page == "change_impact":
             if vv:
                 st.error("V&V Invalidations\n" + "\n".join(f"• {v}" for v in vv), icon=":material/science:")
         with flag_cols[1]:
-            pma = esc.get("pma_flags", [])
-            if pma:
-                st.error("PMA Supplement Flags\n" + "\n".join(f"• {p}" for p in pma), icon=":material/assignment:")
-        with flag_cols[2]:
             capa = esc.get("capa_triggers", [])
             if capa:
                 st.warning("CAPA Reviews\n" + "\n".join(f"• {c}" for c in capa), icon=":material/build:")
@@ -652,7 +894,10 @@ elif st.session_state.current_page == "change_impact":
                 st.session_state.pending_escalation = None
                 st.session_state.escalation_thread_id = None
                 if report:
-                    st.session_state.impact_reports.append(report)
+                    # Escalation approval only continues the pipeline; the assembled
+                    # report is still a working result. It is persisted to
+                    # impact_reports only when approved at the report approval gate.
+                    st.session_state.current_impact_report = report
                     st.session_state.audit_log.append({
                         "event": "escalation_approved",
                         "node": report.changed_node_id,
@@ -693,8 +938,8 @@ elif st.session_state.current_page == "change_impact":
                 st.rerun()
 
     # ── Impact report ─────────────────────────────────────────────────────────
-    if st.session_state.impact_reports:
-        report = st.session_state.impact_reports[-1]
+    if st.session_state.current_impact_report:
+        report = st.session_state.current_impact_report
 
         st.subheader("Impact report")
 
@@ -705,6 +950,7 @@ elif st.session_state.current_page == "change_impact":
         with col_risk:
             st.badge(f"Risk: {risk_label}", color=risk_color)
         with col_meta:
+            st.caption(f"Change type attested as **{report.change_type}**")
             if report.escalation_required and report.escalation_reviewer:
                 st.caption(f"Escalation reviewed by **{report.escalation_reviewer}**")
 
@@ -712,19 +958,14 @@ elif st.session_state.current_page == "change_impact":
         if report.llm_summary:
             st.info(f"**Compliance Summary**\n\n{report.llm_summary}")
 
-        # V&V / PMA Supplement / CAPA flags
-        flag_cols = st.columns(3)
+        # V&V / CAPA flags
+        flag_cols = st.columns(2)
         with flag_cols[0]:
             if report.vv_invalidations:
                 st.error("V&V Invalidations\n" + "\n".join(f"• {v}" for v in report.vv_invalidations), icon=":material/science:")
             else:
                 st.success("No V&V Invalidations", icon=":material/science:")
         with flag_cols[1]:
-            if report.pma_supplement_flags:
-                st.error("PMA Supplement Flags\n" + "\n".join(f"• {p}" for p in report.pma_supplement_flags), icon=":material/assignment:")
-            else:
-                st.success("No PMA Supplement Flags", icon=":material/assignment:")
-        with flag_cols[2]:
             if report.capa_triggers:
                 st.warning("CAPA Reviews\n" + "\n".join(f"• {c}" for c in report.capa_triggers), icon=":material/build:")
             else:
@@ -744,7 +985,7 @@ elif st.session_state.current_page == "change_impact":
                     "Status": n.current_status,
                     "Required Action": n.required_action,
                 })
-            st.dataframe(rows)
+            _render_wrapped_table(rows, wrap_columns={"Title", "Required Action"})
         else:
             st.success("No downstream dependencies found — this node has no impact chain.")
 
@@ -760,7 +1001,7 @@ elif st.session_state.current_page == "change_impact":
                     "Status": n.current_status,
                     "Required Action": n.required_action,
                 })
-            st.dataframe(up_rows)
+            _render_wrapped_table(up_rows, wrap_columns={"Title", "Required Action"})
 
         # Agent traversal trace
         with st.expander("Agent traversal trace", icon=":material/route:"):
@@ -796,9 +1037,9 @@ elif st.session_state.current_page == "change_impact":
                 sme_rows.append({
                     "Team": n.team,
                     "Trigger Node": f"{n.trigger_node_id} ({n.trigger_node_type})",
-                    "Review Obligation": n.review_obligation[:120] + "..." if len(n.review_obligation) > 120 else n.review_obligation,
+                    "Review Obligation": n.review_obligation,
                 })
-            st.dataframe(sme_rows)
+            _render_wrapped_table(sme_rows, wrap_columns={"Review Obligation"})
 
             # CSV export
             csv_buffer = io.StringIO()
@@ -839,36 +1080,61 @@ elif st.session_state.current_page == "change_impact":
         # Human approval gate
         st.subheader("Human approval gate")
         st.caption("Per 21 CFR Part 11 and QMSR §820.40, compliance status cannot be updated without documented human approval.")
-        approver = st.text_input("Approver name / ID", placeholder="e.g., J.Smith / RA-Lead")
-        approve_btn = st.button("Approve impact report & update statuses", type="secondary", icon=":material/check_circle:")
+
+        if report.approved:
+            st.success("Report approved and stored. Downstream V&V/Test Result obligations and upstream traceability requirements marked PENDING_REVIEW.", icon=":material/check_circle:")
+            approver = None
+            approve_btn = False
+        else:
+            approver = st.text_input("Approver name / ID", placeholder="e.g., J.Smith / RA-Lead")
+            approve_btn = st.button("Approve impact report & update statuses", type="secondary", icon=":material/check_circle:")
 
         if approve_btn and approver:
             for n in report.impacted_nodes:
-                if n.node_type in [NodeType.VV_PROTOCOL.value, NodeType.TEST_RESULT.value]:
+                is_upstream = getattr(n, "direction", "downstream") == "upstream"
+                # Two classes of artifact move to PENDING_REVIEW on approval:
+                #   - downstream V&V Protocol / Test Result obligations (data generated
+                #     against a now-superseded spec), and
+                #   - ALL upstream requirements, which must be re-verified for
+                #     bidirectional traceability per QMSR §820.30(b) before they can be
+                #     considered current again. Leaving them 'active' would mislead the
+                #     dashboard into showing them as still-verified.
+                if (
+                    n.node_type in [NodeType.VV_PROTOCOL.value, NodeType.TEST_RESULT.value]
+                    or is_upstream
+                ):
+                    reason = (
+                        f"Bidirectional traceability re-verification required per QMSR "
+                        f"§820.30(b) after change to {report.changed_node_id}; "
+                        f"approved by {approver}"
+                        if is_upstream
+                        else f"Change impact analysis approved by {approver}"
+                    )
                     try:
                         g.update_node_status(
                             n.node_id,
                             NodeStatus.PENDING_REVIEW,
-                            reason=f"Change impact analysis approved by {approver}",
+                            reason=reason,
                         )
                     except Exception:
                         pass
             report.approved = True
+            # Persist the approved report so the dashboard chat and workbench can
+            # reference it. Storage happens only here, on explicit human approval.
+            st.session_state.impact_reports.append(report)
             st.session_state.audit_log.append({
                 "event": "impact_report_approved",
                 "node": report.changed_node_id,
                 "approver": approver,
                 "timestamp": report.timestamp,
+                "impacted_count": len(report.impacted_nodes),
+                "risk_level": report.risk_level,
+                "sme_teams": list(report.team_briefings.keys()),
             })
-            st.success(f"Report approved by {approver}. Affected V&V and Test Result nodes marked PENDING_REVIEW.")
+            st.success(f"Report approved by {approver}. Downstream V&V/Test Result obligations and upstream traceability requirements marked PENDING_REVIEW.")
             st.rerun()
 
-        # Previous reports
-        if len(st.session_state.impact_reports) > 1:
-            with st.expander(f"Previous Reports ({len(st.session_state.impact_reports) - 1})"):
-                for r in reversed(st.session_state.impact_reports[:-1]):
-                    st.write(f"**{r.changed_node_id}** — {r.timestamp[:19]} — {len(r.impacted_nodes)} nodes affected")
-    else:
+    elif not st.session_state.pending_escalation:
         st.info("Select a node and describe the change, then click **Run Impact Analysis**.")
 
 # ===========================================================================
@@ -1232,19 +1498,36 @@ elif st.session_state.current_page == "graph_explorer":
                 if size_by_indegree:
                     size = max(15, min(55, 15 + in_deg.get(n["id"], 0) * 8))
 
+                is_required = bool(n.get("metadata", {}).get("required"))
                 label = f"{n['id']}\n{n['title'][:30]}" if show_details else n["id"]
-                tooltip = f"{n['id']}: {n['title']} ({n['node_type']} · {n['status']})"
+                required_suffix = " · required — to be defined" if is_required else ""
+                tooltip = f"{n['id']}: {n['title']} ({n['node_type']} · {n['status']}{required_suffix})"
+
+                # Required placeholders (open V&V loops) render as a faded, dashed-border
+                # node so they are visually distinct from committed artifacts.
+                if is_required:
+                    node_color = {
+                        "background": "#f5f5f5",
+                        "border": color,
+                        "highlight": {"background": "#ededed", "border": "#5b5bd6"},
+                    }
+                else:
+                    node_color = {
+                        "background": color, "border": color,
+                        "highlight": {"background": "#5b5bd6", "border": "#5b5bd6"},
+                    }
 
                 vis_nodes.append({
                     "id": n["id"],
                     "label": label,
-                    "color": {"background": color, "border": color,
-                               "highlight": {"background": "#5b5bd6", "border": "#5b5bd6"}},
+                    "color": node_color,
                     "level": NODE_TYPE_LEVEL.get(n["node_type"], 4),
                     "size": size,
                     "title": tooltip,
                     "font": {"color": "#111111", "size": 12},
                     "shape": "dot",
+                    "borderWidth": 3 if is_required else 1,
+                    "shapeProperties": {"borderDashes": [4, 4]} if is_required else {"borderDashes": False},
                     "node_type": n["node_type"],
                     "node_status": n["status"],
                     "node_title": n["title"],
@@ -1465,7 +1748,7 @@ const network = new vis.Network(
         enabled: true,
         levelSeparation: 280,
         nodeSpacing: 220,
-        treeSpacing: 350,
+        treeSpacing: 550,
         sortMethod: 'directed',
         direction: 'UD',
         edgeMinimization: true,
@@ -1476,7 +1759,7 @@ const network = new vis.Network(
     }},
     physics: {{ enabled: false }},
     interaction: {{ dragNodes: true, dragView: true, zoomView: false, hover: true, navigationButtons: false, keyboard: false }},
-    nodes: {{ borderWidth: 1, shape: 'dot', font: {{ color: '#111111', size: 12 }} }},
+    nodes: {{ borderWidth: 1, shape: 'dot', font: {{ color: '#111111', size: 12, multi: false }}, widthConstraint: {{ maximum: 130 }} }},
     edges: {{ arrows: {{ to: {{ enabled: true, scaleFactor: 0.7 }} }}, font: {{ size: 13, color: '#000000', background: 'white', strokeWidth: 3, strokeColor: 'white', align: 'middle' }} }},
   }}
 );
@@ -1486,7 +1769,6 @@ const network = new vis.Network(
 // Row 1 (y=280): DI-001 | RC-001 | RC-002       DI-002
 // Row 2 (y=560): TR-001A | VP-001 | DO-001      TR-002A | VP-002 | DO-002
 // Row 3 (y=840): CAPA-018
-// Row 4 (y=1120):PM-001
 // TR is left of VP, VP is left of DO — all three share the same y row.
 // Hierarchical layout disabled so positions are permanent.
 network.once('afterDrawing', function() {{
@@ -1502,7 +1784,6 @@ network.once('afterDrawing', function() {{
     'VP-001':   {{ x: -400, y:  560 }},
     'DO-001':   {{ x: -150, y:  560 }},
     'CAPA-018': {{ x: -650, y:  840 }},
-    'PM-001':   {{ x: -650, y: 1120 }},
     'UN-002':   {{ x:  500, y:    0 }},
     'DI-002':   {{ x:  500, y:  280 }},
     'TR-002A':  {{ x:  250, y:  560 }},
@@ -1563,24 +1844,37 @@ network.once('afterDrawing', function() {{
     var TREE_GAP = 380;   // horizontal gap between separate chains
     var curX     = 750 + TREE_GAP;   // start to the right of seed rightmost node
 
+    // Mirror the seed grid's row collapse: the V&V triad — Design Output (L2),
+    // V&V Protocol (L3), Test Result (L4) — shares a single row instead of
+    // stacking, so a one-node-per-level chain forms a visible triangle and the
+    // straight `verifies` back-edge (TR → DI) reads as the closing leg rather
+    // than overlapping a vertical column.
+    var ROW_OF_LEVEL = {{ 0: 0, 1: 1, 2: 2, 3: 2, 4: 2, 5: 3 }};
+
     components.forEach(function(comp) {{
-      // Group node IDs by level.
-      var byLevel = {{}};
+      // Group node IDs by display row (not raw level).
+      var byRow = {{}};
       comp.forEach(function(id) {{
-        var lv = nodeLvl[id] || 0;
-        if (!byLevel[lv]) byLevel[lv] = [];
-        byLevel[lv].push(id);
+        var lv  = nodeLvl[id] || 0;
+        var row = (ROW_OF_LEVEL[lv] !== undefined) ? ROW_OF_LEVEL[lv] : lv;
+        if (!byRow[row]) byRow[row] = [];
+        byRow[row].push(id);
       }});
 
-      var levels   = Object.keys(byLevel).map(Number).sort(function(a,b){{return a-b;}});
-      var maxWidth = Math.max.apply(null, levels.map(function(lv){{return byLevel[lv].length;}}));
+      var rows     = Object.keys(byRow).map(Number).sort(function(a,b){{return a-b;}});
+      var maxWidth = Math.max.apply(null, rows.map(function(r){{return byRow[r].length;}}));
 
-      levels.forEach(function(lv) {{
-        var ids        = byLevel[lv];
-        var rowWidth   = (ids.length - 1) * COL_SEP;
-        var startX     = curX - rowWidth / 2;
+      rows.forEach(function(row) {{
+        // Within a shared row, order by descending level so Test Result (L4)
+        // sits left, V&V Protocol (L3) center, Design Output (L2) right —
+        // matching the seed grid's TR | VP | DO ordering.
+        var ids = byRow[row].slice().sort(function(a, b){{
+          return (nodeLvl[b] || 0) - (nodeLvl[a] || 0);
+        }});
+        var rowWidth = (ids.length - 1) * COL_SEP;
+        var startX   = curX - rowWidth / 2;
         ids.forEach(function(id, i) {{
-          updates.push({{ id: id, x: startX + i * COL_SEP, y: lv * LEV_SEP }});
+          updates.push({{ id: id, x: startX + i * COL_SEP, y: row * LEV_SEP }});
         }});
       }});
 
@@ -1749,6 +2043,7 @@ elif st.session_state.current_page == "doc_extract":
                 "extraction_id": result.extraction_id,
                 "nodes": len(result.extracted_nodes),
                 "edges": len(result.extracted_edges),
+                "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
             })
 
     if st.session_state.extraction_results:
@@ -1774,7 +2069,12 @@ elif st.session_state.current_page == "doc_extract":
                 cols[1].write(n.node_type.value)
                 cols[2].write(n.title)
                 cols[3].write(f"{n.confidence:.2f}")
-                cols[4].write("Active" if n.confidence >= confidence_threshold else "Pending Review")
+                if getattr(n, "is_required", False):
+                    cols[4].write("Not Started")
+                elif getattr(n, "is_in_review", False):
+                    cols[4].write("Pending Review")
+                else:
+                    cols[4].write("Active" if n.confidence >= confidence_threshold else "Pending Review")
                 if cols[5].button("✕", key=f"del_node_{result.extraction_id}_{i}", help="Remove this node"):
                     result.extracted_nodes.pop(i)
                     st.rerun()
@@ -1880,6 +2180,7 @@ elif st.session_state.current_page == "doc_extract":
                 "extraction_id": result.extraction_id,
                 "nodes_added": nodes_added,
                 "edges_added": edges_added,
+                "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
             })
             st.rerun()
     else:
@@ -1899,6 +2200,7 @@ elif st.session_state.current_page == "audit":
     bd = g.completeness_breakdown()
     orphans = g.orphaned_nodes()
     missing_vv = g.missing_vv_links()
+    open_loops = g.chain_verification_gaps()
 
     # Score card
     score_col, detail_col = st.columns([1, 2])
@@ -1952,22 +2254,14 @@ elif st.session_state.current_page == "audit":
                 except Exception:
                     st.write(f"- `{nid}`")
 
-    # PMA Supplement Monitoring
-    st.subheader("PMA supplement monitoring")
-    pm_nodes = [n for n in g.all_nodes() if n["node_type"] == "PMA Supplement Trigger"]
-    if pm_nodes:
-        for pm in pm_nodes:
-            threshold_pct = pm.get("metadata", {}).get("threshold_pct", "N/A")
-            metric = pm.get("metadata", {}).get("metric", "N/A")
-            approved_lod = pm.get("metadata", {}).get("approved_lod_pg_ml", "N/A")
-            st.info(
-                f"**{pm['id']}** — {pm['title']}\n\n"
-                f"Metric: `{metric}` | Approved value: `{approved_lod} pg/mL` | "
-                f"Supplement threshold: `>{int(threshold_pct * 100)}% change` | "
-                f"Status: `{pm['status']}`"
-            )
-    else:
-        st.write("No PMA supplement trigger nodes found in graph.")
+        # Status-aware open loops: a 'verifies' edge may exist, but if its Test
+        # Result is a required placeholder (not_started) or still pending, the
+        # design-control loop is NOT closed. These gaps are invisible to the
+        # structural missing_vv check above, so surface them explicitly.
+        if open_loops:
+            st.warning(f"**Open Verification/Validation Loops ({len(open_loops)})** — links exist but no completed Test Result closes them:")
+            for gap in open_loops:
+                st.write(f"- `{gap['id']}` [{gap['node_type']}] {gap['title']} — {gap['issue']}")
 
     # ── RTM Export ────────────────────────────────────────────────────────────
     st.subheader("Export RTM")

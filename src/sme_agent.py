@@ -14,7 +14,7 @@ Teams:
   - Bioinformatics: performance re-analysis framing (CLSI, statistical)
   - R&D: study design and re-validation framing (CLSI protocols, timelines)
   - Pathology: clinical risk and patient safety framing (ISO 14971, lab director)
-  - Quality/RA: regulatory submission framing (21 CFR 814.39, QMSR §820.30(i))
+  - Quality/RA: regulatory submission framing (QMSR §820.30(i))
 
 Architecture: LangGraph state machine with map-reduce pattern:
   map_teams → [Send × N teams] → brief_team (×N parallel) → finalize_notifications
@@ -89,11 +89,6 @@ SME_NOTIFICATION_MAP: dict[str, list[tuple[str, str]]] = {
          "Review CAPA scope per QMSR §820.100; update corrective action plan in light "
          "of changed upstream design artifact."),
     ],
-    NodeType.PMA_SUPPLEMENT_TRIGGER.value: [
-        ("Quality/RA",
-         "Evaluate whether a Prior Approval Supplement (PAS) or 30-Day Notice is required "
-         "under 21 CFR 814.39; assess QMSR §820.30(i) design change documentation obligations."),
-    ],
     NodeType.DESIGN_INPUT.value: [
         ("R&D",
          "Assess whether additional bench studies are required to support the revised "
@@ -134,17 +129,30 @@ TEAM_SYSTEM_PROMPTS: dict[str, str] = {
         "physician notification or protocol updates are required. Be clinically direct."
     ),
     "Quality/RA": (
-        "You are a regulatory affairs specialist assessing PMA submission obligations "
-        "following a design specification change on a Class III IVD device (hs-cTnI immunoassay, "
-        "PMA P240052). Frame your response around: 21 CFR 814.39 supplement type determination "
-        "(Prior Approval Supplement vs. 30-Day Notice), QMSR §820.30(i) design change controls "
-        "and documentation requirements, Design History File (DHF) update obligations, FDA "
-        "communication strategy, and the downstream CLIA obligation for customer laboratories "
+        "You are a regulatory affairs specialist assessing design change control obligations "
+        "following a specification change on a Class III IVD device (hs-cTnI immunoassay). "
+        "Frame your response around: QMSR §820.30(i) design change controls "
+        "and documentation requirements, Design History File (DHF) update obligations, "
+        "and the downstream CLIA obligation for customer laboratories "
         "to re-verify performance specifications before reporting patient results. "
         "Be precise about regulatory citations.\n\n"
-        + build_prompt_context(_regulations, ["820.30", "814.39", "493.1253", "493.1255"])
+        + build_prompt_context(_regulations, ["820.30", "493.1253", "493.1255"])
     ),
 }
+
+
+# Quantitative-grounding guardrail — appended to every briefing user prompt.
+# The model has no real schedule/sample-size/cost data, so any number it would
+# otherwise invent (timelines, sample counts, percentages, costs) must be emitted
+# as a bracketed [X] placeholder signalling a variable the team has yet to define.
+QUANTITATIVE_GUARDRAIL = (
+    "Do NOT invent specific quantitative figures — timelines, durations, sample "
+    "sizes, costs, or percentages — for anything not stated in the inputs above. "
+    "You have no confirmed schedule or study data. Where a quantitative estimate "
+    "would normally appear, write it as a bracketed placeholder '[X]' (with units, "
+    "e.g. '[X] weeks', '[X] samples') to signal a value the team must still define. "
+    "Only state a number if it is explicitly given in the inputs."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +170,9 @@ def _merge_dicts(a: dict, b: dict) -> dict:
 
 class SMEState(TypedDict):
     impacted_nodes: list[dict]                          # scored nodes from the change impact agent
+    change_description: str                             # the actual change being analyzed — grounds every briefing
+    changed_node_id: str                                # ID of the node the user changed
+    changed_node_title: str                             # title of the changed node
     sme_notifications: list[dict]                       # assembled SMENotification dicts
     team_briefings: Annotated[dict, _merge_dicts]       # team_name → LLM briefing; merged across parallel brief_team nodes
     # Send-payload fields — populated by map_to_teams, consumed by brief_team_node
@@ -214,8 +225,15 @@ def map_to_teams(state: SMEState) -> list[Send]:
     for n in state["sme_notifications"]:
         team_nodes.setdefault(n["team"], []).append(n)
 
+    # Send dispatches a node with ONLY the payload below — the parent state is not
+    # carried over — so the change context must be copied into every Send explicitly.
+    change_context = {
+        "change_description": state.get("change_description", ""),
+        "changed_node_id": state.get("changed_node_id", ""),
+        "changed_node_title": state.get("changed_node_title", ""),
+    }
     return [
-        Send("brief_team", {"team": team, "team_notifications": notifs})
+        Send("brief_team", {"team": team, "team_notifications": notifs, **change_context})
         for team, notifs in team_nodes.items()
     ]
 
@@ -246,11 +264,31 @@ def brief_team_node(state: SMEState) -> dict:
         f"  Your obligation: {n['review_obligation']}"
         for n in team_notifs
     ]
+
+    # Ground the briefing in the actual change the user described. Without this, the
+    # LLM only sees the impacted node list and ends up describing existing artifacts
+    # rather than reacting to what changed.
+    change_description = state.get("change_description", "").strip()
+    changed_node_id = state.get("changed_node_id", "")
+    changed_node_title = state.get("changed_node_title", "")
+    if change_description:
+        change_header = (
+            f"The change under review was made to "
+            f"[{changed_node_id}] {changed_node_title}:\n"
+            f"\"{change_description}\"\n\n"
+            f"Your briefing must respond to THIS specific change — not merely "
+            f"summarize the artifacts below.\n\n"
+        )
+    else:
+        change_header = ""
+
     user_prompt = (
+        f"{change_header}"
         f"The following RTM nodes in your area of responsibility have been flagged "
         f"by the change impact analysis:\n\n{chr(10).join(node_lines)}\n\n"
         f"Write a 3–4 sentence briefing describing what your team needs to do, "
-        f"in what order, and what the key risk is if action is delayed."
+        f"in what order, and what the key risk is if action is delayed.\n\n"
+        f"{QUANTITATIVE_GUARDRAIL}"
     )
 
     briefing = ""

@@ -27,7 +27,7 @@ from typing import Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from graph import EdgeType, NodeStatus, NodeType, RTMGraph
+from graph import EdgeType, HIERARCHY_LEVEL, NodeStatus, NodeType, RTMGraph
 from regulations import load_regulations, build_prompt_context
 
 _regulations = load_regulations()
@@ -45,6 +45,8 @@ class ExtractedNode:
     description: str
     confidence: float
     source_text: str  # snippet that evidences this node
+    is_required: bool = False  # placeholder the team must fill in; forces NOT_STARTED status
+    is_in_review: bool = False  # exists but being revised/reviewed; forces PENDING_REVIEW status
 
 
 @dataclass
@@ -84,7 +86,6 @@ RTM GRAPH STRUCTURE RULES — apply these to every edge you extract:
    Level 3 — verification:                       V&V Protocol
    Level 4 — evidence:                           Test Result
    Level 5 — corrective action:                  CAPA
-   Level 6 — regulatory filing:                  PMA Supplement Trigger
 
    Edges almost always flow from a lower level number to a higher one.
    A higher-level node should NEVER point back toward a lower-level node (that would be a cycle).
@@ -96,7 +97,6 @@ RTM GRAPH STRUCTURE RULES — apply these to every edge you extract:
    V&V Protocol    --[linked_to]-->   Test Result
    Test Result     --[verifies]-->    Design Input
    Test Result     --[triggers]-->    CAPA
-   Test Result     --[triggers]-->    PMA Supplement Trigger
    Hazard          --[triggers]-->    Risk Control
    Risk Control    --[linked_to]-->   Design Input
    Risk Control    --[linked_to]-->   Design Output
@@ -106,7 +106,7 @@ RTM GRAPH STRUCTURE RULES — apply these to every edge you extract:
    - "verifies": source MUST be Test Result. target MUST be Design Input.
                  No other source or target type is valid for this label.
    - "triggers":  source MUST be Hazard or Test Result.
-                  target MUST be Risk Control, CAPA, or PMA Supplement Trigger.
+                  target MUST be Risk Control or CAPA.
    - "linked_to": the default for all other relationships. When in doubt, use linked_to.
    - Do NOT use "satisfies" or "mitigates" — use linked_to instead.
 
@@ -131,11 +131,10 @@ RTM GRAPH STRUCTURE RULES — apply these to every edge you extract:
 """
 
 SYSTEM_PROMPT = f"""You are a regulatory document analyst specializing in FDA medical device
-compliance under FDA QMSR (21 CFR Part 820), ISO 13485:2016, and 21 CFR Part 814 (PMA
-regulations). Your job is to read regulatory and technical documents for in vitro diagnostic
-(IVD) devices and extract structured RTM (Requirements Traceability Matrix) entities.
+compliance under FDA QMSR (21 CFR Part 820) and ISO 13485:2016. Your job is to read
+structured RTM (Requirements Traceability Matrix) entities.
 
-{build_prompt_context(_regulations, ["820.30", "814.39"])}
+{build_prompt_context(_regulations, ["820.30"])}
 
 {GRAPH_STRUCTURE_RULES}
 
@@ -145,6 +144,13 @@ Node types you can extract:
 
 - User Need (level 0) — a clinical or operational requirement the device must meet.
   Examples: "detect cTnI at concentrations relevant for AMI rule-out", "deliver result within ED triage window".
+  TRIGGER PHRASES — extract a new User Need node whenever the document contains any of:
+    "new requirement", "new unaddressed requirement", "new clinical requirement", "the device must",
+    "the system shall", "distinct population", "not covered by existing", "new use case", "new patient population".
+  When multiple User Needs are present (e.g. different patient populations, different analytes, different clinical
+  contexts), EACH must become its own node. Never collapse two distinct clinical requirements into one node.
+  If the document says this requirement is "not covered by any existing specification" or is "unaddressed",
+  you MUST create a new User Need node — do NOT reuse an existing one.
 
 - Hazard (level 0) — an identified source of patient or user risk under ISO 14971.
   Examples: "false negative result", "sample interference from lipemia".
@@ -172,13 +178,12 @@ Node types you can extract:
 
 - Test Result (level 4) — the actual OUTCOME (pass/fail/data) from executing a V&V Protocol.
   Examples: "Lot 3 LoD measured at 2.6 pg/mL — FAIL", "all precision criteria met across 20 days".
+  ONLY extract a Test Result when the document explicitly states that results exist or were changed —
+  e.g. measured values, pass/fail verdicts, lot-specific data, or a report that has already been produced.
+  Do NOT extract a Test Result for future/planned reports ("will produce", "will generate", "to be completed").
 
 - CAPA (level 5) — a corrective or preventive action triggered by a non-conforming Test Result or audit finding.
   Examples: "root cause investigation for Lot 3 LoD exceedance", "process hold pending reagent reformulation".
-
-- PMA Supplement Trigger (level 6) — a regulatory filing event required under 21 CFR 814.39 when an approved
-  performance specification changes beyond a defined threshold.
-  Examples: "LoD spec change >20% from PMA-approved value triggers Prior Approval Supplement".
 
 CLASSIFICATION RULE: If you are unsure whether something is a Design Input or Design Output, ask:
   Is it a REQUIREMENT (threshold, spec limit, acceptance criterion) → Design Input.
@@ -189,7 +194,7 @@ Edge types you can assign:
                Design Input → Design Output, Design Output → V&V Protocol,
                V&V Protocol → Test Result, Risk Control → Design Input/Output, etc.)
 - verifies   — Test Result → Design Input ONLY. No other source or target is valid.
-- triggers   — Hazard → Risk Control, or Test Result → CAPA / PMA Supplement Trigger ONLY.
+- triggers   — Hazard → Risk Control, or Test Result → CAPA ONLY.
 Do NOT use "satisfies" or "mitigates" — use linked_to instead.
 
 Confidence scores: 0.0 (very uncertain) to 1.0 (explicit in document)."""
@@ -212,7 +217,9 @@ Return a JSON object with this exact structure:
       "title": "short title (< 80 chars)",
       "description": "detailed description from the document",
       "confidence": 0.0-1.0,
-      "source_text": "exact quote from the document that supports this node"
+      "source_text": "exact quote from the document that supports this node",
+      "planned": true or false,
+      "in_review": true or false
     }}
   ],
   "edges": [
@@ -230,6 +237,21 @@ Rules:
 - Only extract entities explicitly stated or clearly implied in the text.
 - Assign confidence < 0.7 for inferred relationships.
 
+- PLANNED VS EXISTING (`planned` field): Set "planned": true when the document
+  describes the artifact as future work the team WILL create — phrased as "will
+  write/author/produce", "will need to", "to be developed", "needs to be defined",
+  etc. The artifact does not exist yet; it is a placeholder the team must fill in.
+  Set "planned": false when the artifact already exists — it has concrete values,
+  was produced/measured, or is referenced as a current specification.
+  A User Need is ALWAYS "planned": false — a clinical requirement exists the moment
+  it is raised, even though everything it drives downstream may still be planned.
+
+- IN REVIEW (`in_review` field): Set "in_review": true when the artifact EXISTS but is
+  not finished — it is being revised, updated, or is under review/approval ("to be
+  revised", "under revision", "pending review", "needs updating"). It is incomplete
+  and must not be treated as a closed/verified artifact. Set false when finished and
+  approved. If "planned" is true, leave "in_review" false (it does not exist yet).
+
 - EXISTING NODES: Before creating any new node, check the existing graph context above.
   If any existing node covers the same artifact — matched by ID, title, numeric spec value,
   or description — do NOT create a new node. Use that existing node's ID in edges instead.
@@ -241,6 +263,16 @@ Rules:
   describes a NEW unaddressed clinical requirement not explicitly covered by an existing node.
   Do NOT reuse an existing User Need ID for a new population or use-case — create a new node.
 
+  MANDATORY USER NEED RULE: If the document contains ANY of the following phrases, you MUST
+  extract a new User Need node regardless of what existing nodes are in the graph context:
+    - "new requirement", "new unaddressed requirement", "unaddressed requirement"
+    - "distinct population", "new population"
+    - "not covered by any existing specification", "not covered by existing"
+    - "the device must be capable of", "the device must detect"
+    - "new clinical requirement", "new use case"
+  These phrases are direct evidence of a User Need. Failure to extract a User Need node
+  when these phrases appear is an extraction error.
+
 - NEW NODES: Only create a new node when ALL THREE conditions hold:
   (1) No existing node in the graph context covers the same concept.
   (2) The document provides direct, explicit evidence for this artifact (quote it in source_text).
@@ -248,10 +280,30 @@ Rules:
   If any condition fails, omit the node entirely. Do not invent placeholder nodes.
   When creating a new node, use the level-appropriate ID prefix: UN- User Need, HZ- Hazard,
   DI- Design Input, RC- Risk Control, DO- Design Output, VP- V&V Protocol,
-  TR- Test Result, CA- CAPA, PM- PMA Supplement Trigger.
+  TR- Test Result, CA- CAPA.
 
 - EDGES WITHOUT NEW NODES: If the document describes a relationship between existing nodes,
   extract the edge (using their existing IDs) but add no new nodes.
+
+- CROSS-CHAIN EDGE PROHIBITION (hard rule): Never create an edge that mixes a newly
+  extracted node with an existing graph node. Two and only two patterns are permitted:
+    (a) Both source and target are newly extracted nodes in this document — allowed.
+    (b) Both source and target are existing nodes in the graph context above — allowed.
+  A mixed edge (one endpoint new, one endpoint existing) is always an extraction error.
+  If the document text implies such a connection, omit the edge entirely.
+  Example of a PROHIBITED edge: new DI-003 → existing DO-001. This must never appear.
+
+- CHAIN COMPLETENESS: When you extract a Design Input node, check whether the document
+  also describes a concrete implementation artifact (an output spec, reagent formulation,
+  algorithm, procedure, or software module) that satisfies it. If so, you MUST also
+  extract the corresponding Design Output node and a linked_to edge from the Design Input
+  to that Design Output. Do not leave a chain that has a DI but no DO when the document
+  explicitly mentions an output artifact. Similarly, if you extract a Design Output and the
+  document describes a verification plan, extract the V&V Protocol node as well.
+
+- USER NEED → DESIGN INPUT EDGES: Whenever you extract a new User Need node AND the document
+  describes a Design Input that "satisfies", "addresses", or "is derived from" that requirement,
+  you MUST also extract a linked_to edge from the User Need to that Design Input.
 
 - DIRECTION: Edges must follow the cause→effect convention and valid patterns in the system prompt.
   Source must be at an equal or lower hierarchy level than target (except for invalidates).
@@ -373,6 +425,366 @@ def _find_existing_match(node: "ExtractedNode", existing: dict) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Cross-chain edge filter
+# ---------------------------------------------------------------------------
+
+def _filter_cross_chain_edges(
+    nodes: list["ExtractedNode"],
+    edges: list["ExtractedEdge"],
+    graph: "RTMGraph",
+) -> list["ExtractedEdge"]:
+    """
+    Drop edges that bridge a newly extracted node to an existing graph node.
+
+    Permitted:
+      - Both endpoints are newly extracted (same document chain).
+      - Both endpoints already exist in the graph (existing relationship update).
+    Dropped:
+      - One endpoint is new, the other is existing (cross-chain hallucination).
+    """
+    new_ids = {n.suggested_id for n in nodes}
+    existing_ids = {n["id"] for n in graph.all_nodes()}
+
+    filtered = []
+    for edge in edges:
+        src_new = edge.source_id in new_ids
+        tgt_new = edge.target_id in new_ids
+        src_existing = edge.source_id in existing_ids
+        tgt_existing = edge.target_id in existing_ids
+
+        if src_new and tgt_new:
+            filtered.append(edge)
+        elif src_existing and tgt_existing:
+            filtered.append(edge)
+        # else: mixed (one new, one existing) → drop silently
+
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Skip-level edge filter
+# ---------------------------------------------------------------------------
+
+def _filter_skip_level_edges(
+    nodes: list["ExtractedNode"],
+    edges: list["ExtractedEdge"],
+    graph: Optional["RTMGraph"],
+) -> list["ExtractedEdge"]:
+    """
+    Drop `linked_to` edges that skip a hierarchy level on the verification spine
+    (e.g. Design Input → V&V Protocol, which bypasses the Design Output).
+
+    The RTM spine advances one level at a time: UN → DI → DO → VP → TR. A
+    `linked_to` edge whose target sits two or more levels below its source jumps
+    over at least one intermediate artifact. Chain-completeness inference
+    (`_infer_missing_chain_links`) rebuilds the proper step-by-step path, so the
+    skip edge is redundant and would double-link the chain. This runs BEFORE that
+    inference so the missing intermediate (e.g. the Design Output) gets created.
+
+    Only `linked_to` is filtered. `verifies` (TR → DI back-edge) and `triggers`
+    (Hazard → Risk Control, Test Result → CAPA cross-track) are intentionally
+    non-adjacent and exempt.
+    """
+    levels: dict[str, int] = {n.suggested_id: HIERARCHY_LEVEL.get(n.node_type, -1) for n in nodes}
+    if graph is not None:
+        for gn in graph.all_nodes():
+            try:
+                levels[gn["id"]] = HIERARCHY_LEVEL[NodeType(gn["node_type"])]
+            except (ValueError, KeyError):
+                pass
+
+    kept: list["ExtractedEdge"] = []
+    for edge in edges:
+        if edge.edge_type == EdgeType.LINKED_TO:
+            src_lvl = levels.get(edge.source_id)
+            tgt_lvl = levels.get(edge.target_id)
+            if src_lvl is not None and tgt_lvl is not None and tgt_lvl - src_lvl >= 2:
+                continue  # skip-level edge — the intermediate artifact is missing
+        kept.append(edge)
+    return kept
+
+
+# ---------------------------------------------------------------------------
+# Chain completeness inference
+# ---------------------------------------------------------------------------
+
+def _infer_missing_chain_links(
+    nodes: list["ExtractedNode"],
+    edges: list["ExtractedEdge"],
+) -> tuple[list["ExtractedNode"], list["ExtractedEdge"]]:
+    """
+    Enforce DI → DO → VP chain completeness within a single extraction result.
+
+    Pass 1: For each Design Input that has no outgoing edge to a Design Output
+            among the extracted nodes, create a stub DO node (confidence=0.70,
+            PENDING_REVIEW) and a linked_to edge from the DI to it.
+
+    Pass 2: For each Design Output (original or just-created stub) that has no
+            outgoing edge to a V&V Protocol among the extracted nodes, wire in
+            the first unconnected VP node found in the extraction. If no VP
+            exists in the extraction, skip — VP may be out of scope for this doc.
+
+    Stubs are flagged with confidence=0.70 so the human reviewer sees them as
+    PENDING_REVIEW and can supply the correct title/description before committing.
+    """
+    extra_nodes: list["ExtractedNode"] = []
+    extra_edges: list["ExtractedEdge"] = []
+
+    def current_nodes() -> list["ExtractedNode"]:
+        return nodes + extra_nodes
+
+    def current_edges() -> list["ExtractedEdge"]:
+        return edges + extra_edges
+
+    # --- Pass 1: DI → DO ---
+    di_nodes = [n for n in nodes if n.node_type == NodeType.DESIGN_INPUT]
+    for di in di_nodes:
+        has_do_edge = any(
+            e.source_id == di.suggested_id
+            and any(
+                n.suggested_id == e.target_id and n.node_type == NodeType.DESIGN_OUTPUT
+                for n in current_nodes()
+            )
+            for e in current_edges()
+        )
+        if has_do_edge:
+            continue
+
+        suffix = di.suggested_id.split("-", 1)[-1] if "-" in di.suggested_id else "NEW"
+        do_id = f"DO-{suffix}"
+        # Avoid collision with IDs already in this extraction
+        taken = {n.suggested_id for n in current_nodes()}
+        if do_id in taken:
+            do_id = f"DO-{suffix}b"
+
+        extra_nodes.append(ExtractedNode(
+            suggested_id=do_id,
+            node_type=NodeType.DESIGN_OUTPUT,
+            title=f"Design Output for {di.title}",
+            description=(
+                f"Implementation artifact satisfying Design Input {di.suggested_id}. "
+                "Inferred by chain completeness — edit title and description to match "
+                "the specific output artifact described in the source document before committing."
+            ),
+            confidence=0.70,
+            source_text="(inferred from chain completeness — no direct quote)",
+            # A Design Output inferred from a planned Design Input is itself planned,
+            # so it inherits the required-placeholder (NOT_STARTED) treatment.
+            is_required=di.is_required,
+        ))
+        extra_edges.append(ExtractedEdge(
+            source_id=di.suggested_id,
+            target_id=do_id,
+            edge_type=EdgeType.LINKED_TO,
+            confidence=0.70,
+            rationale=f"Chain completeness: Design Input {di.suggested_id} requires a Design Output.",
+        ))
+
+    # --- Pass 2: DO → VP ---
+    # Collect VP nodes that are not yet the target of any DO→VP edge
+    def connected_vp_targets() -> set[str]:
+        return {
+            e.target_id
+            for e in current_edges()
+            if any(
+                n.suggested_id == e.source_id and n.node_type == NodeType.DESIGN_OUTPUT
+                for n in current_nodes()
+            )
+        }
+
+    do_nodes = [n for n in current_nodes() if n.node_type == NodeType.DESIGN_OUTPUT]
+    unconnected_vps = [
+        n for n in current_nodes()
+        if n.node_type == NodeType.VV_PROTOCOL
+        and n.suggested_id not in connected_vp_targets()
+    ]
+
+    for do_node in do_nodes:
+        already_has_vp = any(
+            e.source_id == do_node.suggested_id
+            and any(
+                n.suggested_id == e.target_id and n.node_type == NodeType.VV_PROTOCOL
+                for n in current_nodes()
+            )
+            for e in current_edges()
+        )
+        if already_has_vp or not unconnected_vps:
+            continue
+
+        vp = unconnected_vps.pop(0)
+        extra_edges.append(ExtractedEdge(
+            source_id=do_node.suggested_id,
+            target_id=vp.suggested_id,
+            edge_type=EdgeType.LINKED_TO,
+            confidence=0.70,
+            rationale=f"Chain completeness: Design Output {do_node.suggested_id} linked to V&V Protocol {vp.suggested_id}.",
+        ))
+
+    return nodes + extra_nodes, edges + extra_edges
+
+
+# ---------------------------------------------------------------------------
+# Required Test Result inference (open V&V loop placeholders)
+# ---------------------------------------------------------------------------
+
+def _infer_required_test_results(
+    nodes: list["ExtractedNode"],
+    edges: list["ExtractedEdge"],
+) -> tuple[list["ExtractedNode"], list["ExtractedEdge"]]:
+    """
+    Enforce VP → TR chain completeness within a single extraction result.
+
+    Every V&V Protocol ultimately requires a Test Result as objective evidence
+    (QMSR §820.30(f)/(g)). When a document describes a protocol the team plans to
+    author but the result report does not yet exist — "the lab WILL produce a test
+    result" — no Test Result is extracted (the system prompt forbids extracting
+    TR nodes for future/planned reports). That leaves the V&V loop open and
+    invisible in the RTM.
+
+    For each V&V Protocol with no outgoing linked_to edge to a Test Result among
+    the extracted nodes, this pass creates a 'required' Test Result placeholder and
+    a linked_to edge from the protocol to it. Required placeholders are flagged with
+    is_required=True so add_to_graph lands them in NOT_STARTED status, and carry the
+    description "To be defined by the team" — they are explicit placeholders the
+    team must fill in before the RTM is submission-ready, not inferred content.
+    """
+    extra_nodes: list["ExtractedNode"] = []
+    extra_edges: list["ExtractedEdge"] = []
+    taken = {n.suggested_id for n in nodes}
+
+    vp_nodes = [n for n in nodes if n.node_type == NodeType.VV_PROTOCOL]
+    for vp in vp_nodes:
+        has_tr_edge = any(
+            e.source_id == vp.suggested_id
+            and any(
+                n.suggested_id == e.target_id and n.node_type == NodeType.TEST_RESULT
+                for n in nodes + extra_nodes
+            )
+            for e in edges + extra_edges
+        )
+        if has_tr_edge:
+            continue
+
+        suffix = vp.suggested_id.split("-", 1)[-1] if "-" in vp.suggested_id else "NEW"
+        tr_id = f"TR-{suffix}"
+        if tr_id in taken:
+            tr_id = f"TR-{suffix}b"
+        taken.add(tr_id)
+
+        extra_nodes.append(ExtractedNode(
+            suggested_id=tr_id,
+            node_type=NodeType.TEST_RESULT,
+            title=f"[Required] Test Result for {vp.suggested_id}",
+            description="To be defined by the team",
+            confidence=0.0,
+            source_text="(required placeholder — V&V protocol exists but no result report yet)",
+            is_required=True,
+        ))
+        extra_edges.append(ExtractedEdge(
+            source_id=vp.suggested_id,
+            target_id=tr_id,
+            edge_type=EdgeType.LINKED_TO,
+            confidence=0.0,
+            rationale=f"Chain completeness: V&V Protocol {vp.suggested_id} requires a Test Result as objective evidence.",
+        ))
+
+        # Close the V&V loop: the Test Result verifies the Design Input that the
+        # protocol's Design Output implements (QMSR §820.30(f)). Trace VP ← DO ← DI
+        # through the extracted edges and add a `verifies` back-edge TR → DI. This
+        # is the documented accepted cycle, so add_to_graph exempts it from the
+        # cycle check below.
+        do_ids = {
+            e.source_id for e in edges + extra_edges
+            if e.target_id == vp.suggested_id
+            and any(
+                n.suggested_id == e.source_id and n.node_type == NodeType.DESIGN_OUTPUT
+                for n in nodes + extra_nodes
+            )
+        }
+        di_ids = {
+            e.source_id for e in edges + extra_edges
+            if e.target_id in do_ids
+            and any(
+                n.suggested_id == e.source_id and n.node_type == NodeType.DESIGN_INPUT
+                for n in nodes + extra_nodes
+            )
+        }
+        for di_id in di_ids:
+            extra_edges.append(ExtractedEdge(
+                source_id=tr_id,
+                target_id=di_id,
+                edge_type=EdgeType.VERIFIES,
+                confidence=0.0,
+                rationale=f"V&V loop closure: Test Result {tr_id} verifies Design Input {di_id} (QMSR §820.30(f)).",
+            ))
+
+    return nodes + extra_nodes, edges + extra_edges
+
+
+# ---------------------------------------------------------------------------
+# Planned-artifact detection
+# ---------------------------------------------------------------------------
+
+# Future/planning language: phrases describing an artifact as work the team WILL
+# perform, rather than something already produced. Nodes whose evidence reads this
+# way are required placeholders (NOT_STARTED), not existing artifacts.
+_PLANNED_LANGUAGE = re.compile(
+    r"\bwill\s+(?:\w+\s+){0,3}(?:write|author|produce|draft|develop|create|generate|"
+    r"need|drive|define|prepare|conduct|perform|execute|run|build|design|formulate)"
+    r"|\bto\s+be\s+(?:written|authored|produced|developed|created|defined|determined|"
+    r"drafted|generated|completed|conducted|performed|formulated|established)"
+    r"|\bneeds?\s+to\s+be\b|\bwill\s+need\s+to\b|\bplans?\s+to\b|\bintends?\s+to\b",
+    re.IGNORECASE,
+)
+
+
+def _is_planned_artifact(node: "ExtractedNode") -> bool:
+    """
+    True when the document describes this artifact as planned/future work — something
+    the team WILL write, author, or produce — rather than an existing artifact.
+
+    Such nodes are required placeholders: they land in NOT_STARTED status with the
+    required-placeholder styling, like the inferred Test Result.
+
+    User Needs are excluded: a clinical requirement exists the moment it is raised,
+    even though every artifact it drives downstream is still to be built.
+    """
+    if node.node_type == NodeType.USER_NEED:
+        return False
+    text = f"{node.source_text} {node.description}"
+    return bool(_PLANNED_LANGUAGE.search(text))
+
+
+# Revision/review language: phrases describing an artifact that EXISTS but is not
+# finished — it is being revised, updated, or is under review. Unlike a planned
+# artifact (which does not exist yet), this one has a current version, so it lands
+# in PENDING_REVIEW rather than NOT_STARTED. Either way it is incomplete and surfaces
+# as a gap — only active/approved artifacts close a V&V loop.
+_IN_REVIEW_LANGUAGE = re.compile(
+    r"\bto\s+be\s+(?:revised|updated|amended|reviewed|finalized|finalised|confirmed|approved)"
+    r"|\b(?:under|pending|awaiting|in)\s+(?:revision|review|approval)"
+    r"|\bbeing\s+(?:revised|updated|reviewed|amended)"
+    r"|\bneeds?\s+(?:revision|updating|review|approval)"
+    r"|\brequires?\s+(?:revision|updating|review|approval)",
+    re.IGNORECASE,
+)
+
+
+def _is_in_review_artifact(node: "ExtractedNode") -> bool:
+    """
+    True when the document describes this artifact as existing but incomplete — being
+    revised, updated, or under review. It lands in PENDING_REVIEW (it exists, unlike a
+    planned artifact), but is still considered incomplete and surfaces as a gap.
+
+    User Needs are excluded, as in _is_planned_artifact.
+    """
+    if node.node_type == NodeType.USER_NEED:
+        return False
+    text = f"{node.source_text} {node.description}"
+    return bool(_IN_REVIEW_LANGUAGE.search(text))
+
+
+# ---------------------------------------------------------------------------
 # Stub-node inference
 # ---------------------------------------------------------------------------
 
@@ -386,7 +798,6 @@ _PREFIX_TO_NODE_TYPE: dict[str, NodeType] = {
     "VP-": NodeType.VV_PROTOCOL,
     "TR-": NodeType.TEST_RESULT,
     "CA-": NodeType.CAPA,
-    "PM-": NodeType.PMA_SUPPLEMENT_TRIGGER,
 }
 
 
@@ -423,7 +834,7 @@ def _infer_stub_nodes(
             stubs.append(ExtractedNode(
                 suggested_id=node_id,
                 node_type=node_type,
-                title=f"[Inferred] {node_id}",
+                title=node_id,
                 description=(
                     "Stub node inferred from edge reference. "
                     "The LLM mentioned this ID in a relationship but did not describe it explicitly. "
@@ -504,6 +915,18 @@ class RTMDocumentExtractor:
 
         if graph is not None:
             nodes, edges = _deduplicate_against_graph(nodes, edges, graph)
+            edges = _filter_cross_chain_edges(nodes, edges, graph)
+
+        # Drop skip-level linked_to edges (e.g. DI → VP) before chain inference
+        # rebuilds the proper step-by-step path through the missing intermediate.
+        edges = _filter_skip_level_edges(nodes, edges, graph)
+
+        # Enforce DI → DO → VP chain completeness; stubs land in PENDING_REVIEW
+        nodes, edges = _infer_missing_chain_links(nodes, edges)
+
+        # Enforce VP → TR completeness: every V&V Protocol gets a required Test
+        # Result placeholder (NOT_STARTED) when its result report does not yet exist.
+        nodes, edges = _infer_required_test_results(nodes, edges)
 
         # Infer stub nodes for any edge endpoint the LLM referenced but did not
         # include in the nodes array and that does not already exist in the graph.
@@ -543,11 +966,21 @@ class RTMDocumentExtractor:
         edges_added = 0
 
         for node in result.extracted_nodes:
-            status = (
-                NodeStatus.ACTIVE
-                if node.confidence >= confidence_threshold
-                else NodeStatus.PENDING_REVIEW
-            )
+            if node.is_required:
+                # Required placeholders are not evidence — they mark an open V&V loop
+                # the team must close, so they land in NOT_STARTED regardless of
+                # confidence and are tagged for distinct rendering in Graph Explorer.
+                status = NodeStatus.NOT_STARTED
+            elif node.is_in_review:
+                # Exists but unfinished (being revised / under review) — incomplete,
+                # so it never lands in a completed status regardless of confidence.
+                status = NodeStatus.PENDING_REVIEW
+            else:
+                status = (
+                    NodeStatus.ACTIVE
+                    if node.confidence >= confidence_threshold
+                    else NodeStatus.PENDING_REVIEW
+                )
             graph.add_node(
                 node.suggested_id,
                 node.node_type,
@@ -559,6 +992,7 @@ class RTMDocumentExtractor:
                     "extraction_id": result.extraction_id,
                     "source_document": result.document_name,
                     "extracted_by": "llm",
+                    "required": node.is_required,
                 },
             )
             nodes_added += 1
@@ -567,7 +1001,13 @@ class RTMDocumentExtractor:
             try:
                 # Reject any edge that would introduce a cycle: if target can
                 # already reach source, adding source→target closes a loop.
-                if graph.has_path(edge.target_id, edge.source_id):
+                # EXCEPTION: `verifies` (Test Result → Design Input) is the
+                # documented V&V loop-closure back-edge (QMSR §820.30(f)) — it is
+                # meant to close the DI→DO→VP→TR→DI loop, so it is exempt.
+                if (
+                    edge.edge_type != EdgeType.VERIFIES
+                    and graph.has_path(edge.target_id, edge.source_id)
+                ):
                     continue
                 graph.add_edge(
                     edge.source_id,
@@ -600,14 +1040,24 @@ class RTMDocumentExtractor:
                 node_type = NodeType(item.get("node_type", "User Need"))
             except ValueError:
                 node_type = NodeType.USER_NEED
-            nodes.append(ExtractedNode(
+            node = ExtractedNode(
                 suggested_id=item.get("suggested_id", str(uuid.uuid4())[:6]),
                 node_type=node_type,
                 title=item.get("title", "Untitled"),
                 description=item.get("description", ""),
                 confidence=float(item.get("confidence", 0.5)),
                 source_text=item.get("source_text", ""),
-            ))
+            )
+            # A node the document describes as planned/future work the team WILL
+            # create — rather than an existing artifact — is a required placeholder.
+            # Trust an explicit LLM `planned` flag, and fall back to detecting
+            # forward-looking language in the evidence quote.
+            node.is_required = bool(item.get("planned", False)) or _is_planned_artifact(node)
+            # Otherwise, an existing-but-unfinished artifact (being revised / under
+            # review) is incomplete too — it lands in PENDING_REVIEW and is a gap.
+            if not node.is_required:
+                node.is_in_review = bool(item.get("in_review", False)) or _is_in_review_artifact(node)
+            nodes.append(node)
         return nodes
 
     # Blocked edge types — coerce to linked_to if the LLM produces them.
@@ -689,10 +1139,7 @@ to ≤ 1.2 pg/mL across all manufacturing lots. This is a performance improvemen
 change that tightens the analytical sensitivity requirement.
 
 Regulatory Framework:
-This change is subject to FDA QMSR §820.30(i) design change controls. The change
-modifies an approved performance specification and must be evaluated against
-21 CFR 814.39 to determine whether a Prior Approval Supplement (PAS) or
-30-Day Notice is required.
+This change is subject to FDA QMSR §820.30(i) design change controls.
 
 Impact Assessment:
 - V&V Protocol VP-001 (LoD/LoQ Verification, CLSI EP17-A2) must be re-executed
@@ -701,17 +1148,14 @@ Impact Assessment:
   given the tightened sensitivity specification.
 - CAPA-018 scope may expand: the Lot 3 non-conformance at 2.6 pg/mL becomes
   more significant if the specification tightens to 1.2 pg/mL.
-- PMA Supplement Trigger PM-001: a >20% change in LoD specification from the
-  approved value of 2.0 pg/mL (threshold: 1.6 pg/mL) is crossed by this change.
-  PMA supplement evaluation required under 21 CFR 814.39.
 
 Approval Required:
-Change cannot be implemented without QA/RA review and determination of FDA
-notification pathway. Design freeze remains in effect until CR-089 is approved.
+Change cannot be implemented without QA/RA review. Design freeze remains in
+effect until CR-089 is approved.
     """,
 
     "qmsr_pma_guidance_excerpt.txt": (
         "REGULATORY TEXT — verbatim from eCFR (ecfr.gov)\n\n"
-        + build_prompt_context(_regulations, ["820.30", "820.100", "820.40", "820.180", "814.39"])
+        + build_prompt_context(_regulations, ["820.30", "820.100", "820.40", "820.180"])
     ),
 }

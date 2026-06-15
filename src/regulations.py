@@ -4,7 +4,6 @@ Fetches and caches verbatim regulatory text from the eCFR public API.
 Sections fetched:
   21 CFR Part 820 — 820.30 (design controls), 820.100 (CAPA),
                      820.180 (records), 820.40 (document controls)
-  21 CFR Part 814 — 814.39 (PMA supplements)
   42 CFR Part 493 — 493.1253 (CLIA: performance specification verification),
                      493.1255 (CLIA: calibration and calibration verification)
 
@@ -38,7 +37,6 @@ _SECTIONS = {
     "820.100":  ("21", "820", "21 CFR §820.100 — Corrective and Preventive Action (CAPA)"),
     "820.180":  ("21", "820", "21 CFR §820.180 — General Requirements (Records)"),
     "820.40":   ("21", "820", "21 CFR §820.40 — Document Controls"),
-    "814.39":   ("21", "814", "21 CFR §814.39 — PMA Supplements"),
     "493.1253": ("42", "493", "42 CFR §493.1253 — CLIA: Establishment and Verification of Performance Specifications"),
     "493.1255": ("42", "493", "42 CFR §493.1255 — CLIA: Calibration and Calibration Verification"),
 }
@@ -49,7 +47,6 @@ _FALLBACK = {
     "820.100":  "21 CFR §820.100: Manufacturers shall establish CAPA procedures.",
     "820.180":  "21 CFR §820.180: All required records shall be maintained and accessible.",
     "820.40":   "21 CFR §820.40: Manufacturers shall establish document control procedures.",
-    "814.39":   "21 CFR §814.39: PMA supplements are required before implementing changes affecting safety or effectiveness.",
     "493.1253": "42 CFR §493.1253: Laboratories must establish and verify performance specifications including accuracy, precision, reportable range, reference intervals, and for quantitative procedures, the limit of detection and limit of quantitation, before reporting patient results.",
     "493.1255": "42 CFR §493.1255: Laboratories must perform calibration and calibration verification procedures using the manufacturer's instructions to ensure accuracy of patient test results throughout the reportable range.",
 }
