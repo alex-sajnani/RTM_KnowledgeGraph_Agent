@@ -38,8 +38,8 @@ Most teams manage this in spreadsheets. When a design input changes, someone has
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/yourusername/rtm-knowledge-graph-agent
-cd rtm-knowledge-graph-agent
+git clone git clone https://github.com/alex-sajnani/RTM_KnowledgeGraph_Agent.git
+cd RTM_KnowledgeGraph_Agent
 
 # 2. Install dependencies
 pip install -r requirements.txt
