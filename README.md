@@ -38,7 +38,7 @@ Most teams manage this in spreadsheets. When a design input changes, someone has
 
 ```bash
 # 1. Clone the repo
-git clone git clone https://github.com/alex-sajnani/RTM_KnowledgeGraph_Agent.git
+git clone https://github.com/alex-sajnani/RTM_KnowledgeGraph_Agent.git
 cd RTM_KnowledgeGraph_Agent
 
 # 2. Install dependencies
