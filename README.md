@@ -12,8 +12,8 @@ FDA PMA device development requires bidirectional traceability:
 ```
 Design control:
 User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results
-- verification closes Output ↔ Input
-- validation closes Test Results ↔ User Needs
+- verification studies close Output ↔ Input
+- validation studies close Test Results ↔ User Needs
 ```
 ## Demo
 
