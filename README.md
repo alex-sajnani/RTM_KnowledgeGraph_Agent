@@ -15,20 +15,21 @@ User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Resul
 - verification studies close Output ↔ Input
 - validation studies close Test Results ↔ User Needs
 ```
-## Demo
-
-![](assets/demo.png)
-
 Most teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence or trigger PMA supplement review cannot proceed without explicit documented sign-off.
 
 **Six core capabilities:**
 
 1. **RTM Query Bar** — ask plain-English questions about any node, its history, dependencies, or compliance status directly from the dashboard; the LLM answers against the full live graph context
-2. **Multi-Agent Change Impact** — select any RTM node, attest the change type (functional / corrective / documentation-only / no change), describe the change, and the supervisor runs: Change Impact Agent (traverse → classify → report) → risk scoring → escalation gate (if critical) → SME Router Agent (team-specific briefings)
-3. **Critical-Risk Escalation Gate** — changes that invalidate V&V protocols or trigger PMA supplement review are automatically classified as critical; the pipeline pauses and requires a named reviewer to approve or reject before SME briefings are generated
-4. **SME Outreach Flow** — each affected team receives a card with an LLM briefing in their domain vocabulary and an approve button; the human approval gate prevents any status update without documented sign-off
-5. **Interactive Graph Explorer** — vis.js hierarchical dependency graph with double-click node detail panels, same-level edge curving to prevent overlap, and root-node subgraph filtering
-6. **Audit Readiness Dashboard** — live completeness score, orphan detection, V&V gap report, and PMA supplement flag monitoring
+![](assets/dashboard.png)
+3. **Multi-Agent Change Impact** — select any RTM node, attest the change type (functional / corrective / documentation-only / no change), describe the change, and the supervisor runs: Change Impact Agent (traverse → classify → report) → risk scoring → escalation gate (if critical) → SME Router Agent (team-specific briefings)
+4. **Critical-Risk Escalation Gate** — changes that invalidate V&V protocols or trigger PMA supplement review are automatically classified as critical; the pipeline pauses and requires a named reviewer to approve or reject before SME briefings are generated
+![](assets/change_impact.png)
+6. **SME Outreach Flow** — each affected team receives a card with an LLM briefing in their domain vocabulary and an approve button; the human approval gate prevents any status update without documented sign-off
+![](assets/sme_briefing.png)
+8. **Interactive Graph Explorer** — vis.js hierarchical dependency graph with double-click node detail panels, same-level edge curving to prevent overlap, and root-node subgraph filtering
+![](assets/graph_explorer.png)
+9. **Audit Readiness Dashboard** — live completeness score, orphan detection, V&V gap report, and PMA supplement flag monitoring
+![](assets/audit.png)
 
 ---
 
