@@ -7,19 +7,11 @@ A multi-agent LangGraph system that transforms a static Requirements Traceabilit
 
 ## What This Builds
 
-FDA PMA device development requires bidirectional traceability across two parallel tracks that merge into a shared design backbone:
+FDA PMA device development requires bidirectional traceability:
 
 ```
-Design control (the V-model backbone):
-  User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results
-                                          (verification closes Output ↔ Input;
-                                           validation closes Test Results ↔ User Needs)
-
-Risk management (ISO 14971), running in parallel and feeding into the backbone:
-  Hazards → Risk Controls ──▶ Design Inputs / Design Outputs
-
-Quality system (conditional branch off a nonconforming result):
-  Test Result (fails spec) → CAPA
+Design control
+  User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results (verification closes Output ↔ Input;validation closes Test Results ↔ User Needs)
 ```
 Most teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence or trigger PMA supplement review cannot proceed without explicit documented sign-off.
 
@@ -34,7 +26,7 @@ Most teams manage this in spreadsheets. When a design input changes, someone has
 
 ---
 
-## Setup (one API key, that's it)
+## Setup
 
 ```bash
 # 1. Clone the repo
