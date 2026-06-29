@@ -15,6 +15,10 @@ User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Resul
 - verification closes Output ↔ Input
 - validation closes Test Results ↔ User Needs
 ```
+## Demo
+
+![](assets/demo.png)
+
 Most teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence or trigger PMA supplement review cannot proceed without explicit documented sign-off.
 
 **Six core capabilities:**
