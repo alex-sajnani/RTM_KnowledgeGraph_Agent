@@ -1,0 +1,45 @@
+# Collate-inspired theme
+# Clean life sciences SaaS aesthetic — white base, lavender accents, pill buttons
+
+[theme]
+base = "light"
+primaryColor = "#1a1a2e"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f5f5fb"
+codeBackgroundColor = "#f5f5fb"
+textColor = "#0f0f1a"
+linkColor = "#5b5bd6"
+codeTextColor = "#0f0f1a"
+borderColor = "#e0e0f0"
+
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "large"
+buttonRadius = "full"
+
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+codeFontSize = "0.875rem"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["32px", "24px", "20px", "16px", "14px", "12px"]
+headingFontWeights = [700, 700, 600, 600, 500, 500]
+linkUnderline = false
+
+chartCategoricalColors = ["#5b5bd6", "#3b82f6", "#22c55e", "#a855f7", "#f97316", "#ef4444", "#eab308"]
+
+violetColor = "#5b5bd6"
+blueColor = "#3b82f6"
+greenColor = "#22c55e"
+redColor = "#ef4444"
+orangeColor = "#f97316"
+yellowColor = "#eab308"
+grayColor = "#6b7280"
+
+[theme.sidebar]
+backgroundColor = "#f5f5fb"
+secondaryBackgroundColor = "#eaeaf5"
+textColor = "#0f0f1a"
+borderColor = "#e0e0f0"
+primaryColor = "#1a1a2e"
