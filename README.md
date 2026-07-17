@@ -11,7 +11,6 @@ FDA device development requires bidirectional traceability:
 
 ```
 Design control: User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results
-
 ```
 Some teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence or trigger supplement review cannot proceed without explicit documented sign-off.
 
