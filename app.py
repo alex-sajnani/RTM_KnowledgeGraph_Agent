@@ -1282,8 +1282,8 @@ elif st.session_state.current_page == "graph_explorer":
                 )
             status_parts = [
                 '<span style="border:2px solid #5b8dd9;color:#eee;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">● active</span>',
-                '<span style="border:2px dashed #aaa;color:#aaa;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">- - pending review</span>',
-                '<span style="border:2px dashed #888;color:#888;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">- - not started</span>',
+                '<span style="border:3px dashed #000;color:#eee;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">- - pending review</span>',
+                '<span style="border:3px dashed #000;color:#eee;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">- - not started</span>',
                 '<span style="border:2px solid #cc4444;color:#cc4444;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">● invalidated</span>',
             ]
             st.markdown(
@@ -1647,6 +1647,12 @@ elif st.session_state.current_page == "graph_explorer":
                         "border": color,
                         "highlight": {"background": "#ededed", "border": "#5b5bd6"},
                     }
+                elif status in {NodeStatus.PENDING_REVIEW.value, NodeStatus.NOT_STARTED.value}:
+                    node_color = {
+                        "background": color,
+                        "border": "#000000",
+                        "highlight": {"background": color, "border": "#5b5bd6"},
+                    }
                 elif status == NodeStatus.INVALIDATED.value:
                     node_color = {
                         "background": "#fde0e0",
@@ -1668,9 +1674,9 @@ elif st.session_state.current_page == "graph_explorer":
                     "title": tooltip,
                     "font": {"color": "#111111", "size": 12},
                     "shape": "dot",
-                    "borderWidth": 3 if (is_required or status in {NodeStatus.PENDING_REVIEW.value, NodeStatus.NOT_STARTED.value}) else 1,
+                    "borderWidth": 4 if status in {NodeStatus.PENDING_REVIEW.value, NodeStatus.NOT_STARTED.value} else (3 if is_required else 1),
                     "shapeProperties": {
-                        "borderDashes": [6, 4] if (is_required or status in {NodeStatus.PENDING_REVIEW.value, NodeStatus.NOT_STARTED.value}) else False
+                        "borderDashes": [8, 5] if (is_required or status in {NodeStatus.PENDING_REVIEW.value, NodeStatus.NOT_STARTED.value}) else False
                     },
                     "node_type": n["node_type"],
                     "node_status": n["status"],
