@@ -58,10 +58,12 @@ from regulations import (
     DEVICE_CLASSES,
     PATHWAY_GROUNDING,
     TEAM_GROUNDING,
+    TOPIC_GROUNDING,
     build_prompt_context,
     grounding_status,
     load_regulations,
     pathway_context,
+    sections_for_query,
 )
 from regulatory_refresh import (
     SourceTextError,
@@ -2089,3 +2091,62 @@ def test_every_standard_cited_by_seed_data_is_in_the_registry(g):
     assert cited, "seed data should cite standards"
     for ref in cited:
         assert ref in designations, ref
+
+
+# ---------------------------------------------------------------------------
+# Section 10: Topic-based query grounding (sections_for_query)
+# ---------------------------------------------------------------------------
+
+def test_sections_for_query_always_includes_core_qmsr():
+    for question in ["what is the status?", "explain the CAPA", "any 510(k) implications?"]:
+        ids = sections_for_query(question)
+        for sid in CORE_QMSR:
+            assert sid in ids, f"CORE_QMSR id {sid!r} missing for {question!r}"
+
+
+def test_sections_for_query_keyword_routing():
+    # CAPA question → capa topic
+    ids = sections_for_query("Is CAPA-018 closed?")
+    for sid in TOPIC_GROUNDING["capa"]:
+        assert sid in ids
+
+    # 510(k) question → submission_trigger topic
+    ids = sections_for_query("Does this change need a new 510(k)?")
+    for sid in TOPIC_GROUNDING["submission_trigger"]:
+        assert sid in ids
+
+    # LoD question → analytical_performance topic
+    ids = sections_for_query("What is the LoD requirement?")
+    for sid in TOPIC_GROUNDING["analytical_performance"]:
+        assert sid in ids
+
+
+def test_sections_for_query_no_match_falls_back_to_design_and_inspection():
+    # A vague question with no recognized keywords should still get useful grounding.
+    ids = sections_for_query("tell me about this device")
+    for sid in TOPIC_GROUNDING["design_controls"] + TOPIC_GROUNDING["inspection"]:
+        assert sid in ids
+
+
+def test_sections_for_query_node_type_supplements_keywords():
+    # A node_type hint adds its topic even when the question text has no keywords.
+    ids = sections_for_query("what should I know?", node_types=["Test Result"])
+    for sid in TOPIC_GROUNDING["vv_verification"]:
+        assert sid in ids
+
+
+def test_sections_for_query_all_ids_exist_in_snapshot():
+    # Every section ID returned must be present in the pinned snapshot.
+    from regulations import _read_snapshot
+    snapshot_ids = set(_read_snapshot().get("sections", {}).keys())
+    for question in [
+        "Is DI-001 verified?",
+        "What does CAPA-018 require?",
+        "Does this need a 510(k)?",
+        "What is the LoD spec?",
+        "Show inspection readiness",
+        "Explain risk management",
+        "Are records current?",
+    ]:
+        for sid in sections_for_query(question):
+            assert sid in snapshot_ids, f"unknown section {sid!r} for {question!r}"

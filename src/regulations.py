@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,170 @@ INSPECTION_GROUNDING = [
     "cp7382850:design-development",
     "cp7382850:change-control",
 ]
+
+# Query topic → the sections that are relevant. Used by sections_for_query()
+# to inject only what the question needs instead of the full bundle.
+TOPIC_GROUNDING: dict[str, list[str]] = {
+    "vv_verification": [
+        "qmsr-preamble:design-changes",
+        "510k-change:vv-role",
+        "510k-change:risk-based-assessment",
+    ],
+    "capa": [
+        "qmsr-preamble:capa",
+        "qmsr-preamble:capa-effectiveness",
+    ],
+    "analytical_performance": [
+        "493.1253",
+        "493.1255",
+    ],
+    "submission_trigger": [
+        "807.81",
+        "510k-change:qmsr-note",
+        "510k-change:risk-based-assessment",
+        "510k-change:ivd-operating-principle",
+        "510k-change:ivd-risk-assessment",
+        "510k-change:documentation",
+    ],
+    "design_controls": [
+        "820.10",
+        "qmsr-preamble:design-records",
+        "qmsr-preamble:design-review",
+        "qmsr-preamble:design-applicability",
+    ],
+    "inspection": [
+        "fda-qmsr:inspections",
+        "cp7382850:qms-areas",
+        "cp7382850:design-development",
+        "cp7382850:change-control",
+    ],
+    "risk_management": [
+        "qmsr-preamble:risk-management",
+        "qmsr-preamble:clinical-evaluation",
+    ],
+    "records": [
+        "820.35",
+        "fda-qmsr-faq:pre-qmsr-records",
+        "fda-qmsr-faq:iso-access",
+    ],
+}
+
+# Compiled patterns for keyword → topic classification. Each tuple is
+# (topic, [pattern, ...]). A query matches a topic if any pattern matches.
+_TOPIC_PATTERNS: list[tuple[str, list[re.Pattern]]] = [
+    ("vv_verification", [
+        re.compile(r"\bv[&/]v\b", re.I),
+        re.compile(r"\bverif(y|ied|ication)\b", re.I),
+        re.compile(r"\bvalidat(e|ed|ion)\b", re.I),
+        re.compile(r"\btest.?result\b", re.I),
+        re.compile(r"\bprotocol\b", re.I),
+        re.compile(r"\binvalidat", re.I),
+    ]),
+    ("capa", [
+        re.compile(r"\bcapa\b", re.I),
+        re.compile(r"\bcorrective\b", re.I),
+        re.compile(r"\bnon.?conform", re.I),
+    ]),
+    ("analytical_performance", [
+        re.compile(r"\blod\b", re.I),
+        re.compile(r"\bloq\b", re.I),
+        re.compile(r"\bprecision\b", re.I),
+        re.compile(r"\banalytical", re.I),
+        re.compile(r"\bclia\b", re.I),
+        re.compile(r"\bcalibrat", re.I),
+        re.compile(r"\bperformance.?spec", re.I),
+    ]),
+    ("submission_trigger", [
+        re.compile(r"\b510.?k\b", re.I),
+        re.compile(r"\bsubmission\b", re.I),
+        re.compile(r"\bpremarket\b", re.I),
+        re.compile(r"\b807\.81\b", re.I),
+        re.compile(r"\bsignificant.?change\b", re.I),
+    ]),
+    ("design_controls", [
+        re.compile(r"\bdesign.?input\b", re.I),
+        re.compile(r"\bdesign.?output\b", re.I),
+        re.compile(r"\bdhf\b", re.I),
+        re.compile(r"\btraceab", re.I),
+        re.compile(r"\buser.?need\b", re.I),
+        re.compile(r"\bdesign.?control\b", re.I),
+    ]),
+    ("inspection", [
+        re.compile(r"\binspection\b", re.I),
+        re.compile(r"\baudit\b", re.I),
+        re.compile(r"\b7382\b", re.I),
+        re.compile(r"\binvestigator\b", re.I),
+        re.compile(r"\bqms\b", re.I),
+        re.compile(r"\bqms.?area\b", re.I),
+    ]),
+    ("risk_management", [
+        re.compile(r"\brisk\b", re.I),
+        re.compile(r"\bhazard\b", re.I),
+        re.compile(r"\biso.?14971\b", re.I),
+        re.compile(r"\bmitigation\b", re.I),
+    ]),
+    ("records", [
+        re.compile(r"\brecord\b", re.I),
+        re.compile(r"\bdocument(ation)?\b", re.I),
+        re.compile(r"\b820\.35\b", re.I),
+    ]),
+]
+
+# Node type → topic(s) that are always relevant for questions about that node.
+_NODE_TYPE_TOPICS: dict[str, list[str]] = {
+    "Test Result":    ["vv_verification"],
+    "V&V Protocol":   ["vv_verification"],
+    "Design Input":   ["design_controls", "vv_verification"],
+    "Design Output":  ["design_controls"],
+    "User Need":      ["design_controls"],
+    "CAPA":           ["capa"],
+    "Hazard":         ["risk_management"],
+    "Risk Control":   ["risk_management"],
+}
+
+
+def sections_for_query(
+    question: str,
+    node_types: list[str] | None = None,
+) -> list[str]:
+    """
+    Return the section IDs most relevant to a query, without injecting the
+    entire library. Always includes CORE_QMSR. Classifies the question by
+    keyword patterns and optionally by node types present in the context.
+
+    This replaces the hard-coded CORE_QMSR + INSPECTION_GROUNDING bundle
+    that the dashboard chat was injecting regardless of topic.
+    """
+    matched: set[str] = set()
+
+    # Keyword classification on the question text.
+    for topic, patterns in _TOPIC_PATTERNS:
+        if any(p.search(question) for p in patterns):
+            matched.add(topic)
+
+    # Node-type-based classification supplements keyword matching.
+    for nt in (node_types or []):
+        for topic in _NODE_TYPE_TOPICS.get(nt, []):
+            matched.add(topic)
+
+    # If nothing matched, fall back to the general design-controls + inspection
+    # bundle so a vague question still gets useful grounding.
+    if not matched:
+        matched = {"design_controls", "inspection"}
+
+    # Collect section IDs, preserving a stable order.
+    ids: list[str] = list(CORE_QMSR)
+    seen = set(ids)
+    for topic in ("design_controls", "inspection", "vv_verification", "capa",
+                  "analytical_performance", "submission_trigger",
+                  "risk_management", "records"):
+        if topic in matched:
+            for sid in TOPIC_GROUNDING[topic]:
+                if sid not in seen:
+                    ids.append(sid)
+                    seen.add(sid)
+    return ids
+
 
 # SME team → the sections its briefing is grounded in (pathway text is added
 # separately for Quality/RA based on the device class).

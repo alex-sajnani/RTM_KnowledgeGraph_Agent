@@ -55,7 +55,7 @@ from sme_agent import SME_NOTIFICATION_MAP
 from regulations import (
     CORE_QMSR, GROUNDING_INSTRUCTION, INSPECTION_GROUNDING, ISO_13485_READ_ONLY_URL,
     build_prompt_context, grounding_status, load_device_definition, load_regulations, load_standards,
-    pathway_context, section_label,
+    pathway_context, section_label, sections_for_query,
 )
 from regulatory_refresh import apply_regulatory_updates, check_regulatory_updates
 from claim_check import check_output
@@ -366,12 +366,15 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
         "plainly that no such node exists in the current graph rather than making one up."
     )
     device_class = load_device_definition().get("device_class") or DEFAULT_DEVICE_CLASS
+    # Classify by keyword + any node types referenced in the question, so only
+    # the relevant regulatory sections reach the prompt instead of the full bundle.
+    referenced_types = [
+        n["node_type"] for n in nodes
+        if n["id"] in question or n["title"].lower() in question.lower()
+    ]
+    query_sections = sections_for_query(question, node_types=referenced_types)
     system_prompt += (
-        "\n\n" + build_prompt_context(
-            st.session_state.regulations,
-            CORE_QMSR + INSPECTION_GROUNDING
-            + ["fda-qmsr-faq:pre-qmsr-records", "fda-qmsr-faq:iso-access"],
-        )
+        "\n\n" + build_prompt_context(st.session_state.regulations, query_sections)
         + "\n\n" + pathway_context(st.session_state.regulations, device_class)
     )
     user_prompt = (
