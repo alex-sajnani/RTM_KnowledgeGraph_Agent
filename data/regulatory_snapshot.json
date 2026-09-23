@@ -1,0 +1,467 @@
+{
+  "generated_at": "2026-09-23T21:11:17+00:00",
+  "sources": {
+    "fr:89-FR-7496": {
+      "title": "Medical Devices; Quality System Regulation Amendments (Final Rule), 89 FR 7496",
+      "url": "https://www.federalregister.gov/d/2024-01709",
+      "version_date": "2024-02-02",
+      "content_sha256": "b89df06dcd5d7966a2ef3d69d623d45bdf3f3686c3ced655be4633d2c794e624",
+      "retrieved_at": "2026-09-23T21:11:04+00:00",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "ecfr:21-820-qsreg": {
+      "title": "21 CFR Part 820, Quality System Regulation (superseded 2026-02-02; eCFR as of 2026-02-01)",
+      "url": "https://www.ecfr.gov/on/2026-02-01/title-21/part-820",
+      "version_date": "2026-02-01",
+      "content_sha256": "d2715f31bebbd7c150dc77692d8eb5d37c32b6e151644a20f1cbe6b66573f836",
+      "retrieved_at": "2026-09-23T21:11:04+00:00",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "superseded"
+    },
+    "ecfr:21-820": {
+      "title": "21 CFR Part 820 (eCFR)",
+      "url": "https://www.ecfr.gov/current/title-21/part-820",
+      "version_date": "2026-09-21",
+      "content_sha256": "e4a86749a94a9129644291fca3da5d09ac5ca481e510ddd4ba807efeda73b764",
+      "retrieved_at": "2026-09-23T21:11:14+00:00",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "ecfr:21-807": {
+      "title": "21 CFR Part 807 (eCFR)",
+      "url": "https://www.ecfr.gov/current/title-21/part-807",
+      "version_date": "2026-09-21",
+      "content_sha256": "f72ac4083237c4c1f6999826127c12519f7a02ae5fd838efc2b63b83633bbb52",
+      "retrieved_at": "2026-09-23T21:11:14+00:00",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "ecfr:21-862": {
+      "title": "21 CFR Part 862 (eCFR)",
+      "url": "https://www.ecfr.gov/current/title-21/part-862",
+      "version_date": "2026-09-21",
+      "content_sha256": "58743ae0ba6e8d634a9eeaa66b9564ccb0e348577ead0379458ce50598e4a6cc",
+      "retrieved_at": "2026-09-23T21:11:14+00:00",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "ecfr:42-493": {
+      "title": "42 CFR Part 493 (eCFR)",
+      "url": "https://www.ecfr.gov/current/title-42/part-493",
+      "version_date": "2026-09-21",
+      "content_sha256": "855f6a0a9910b81ab544a525935ece6066b148939f2bb804cfc7f864e8d47283",
+      "retrieved_at": "2026-09-23T21:11:14+00:00",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda:qmsr-page": {
+      "title": "FDA Quality Management System Regulation (QMSR) web page",
+      "url": "https://www.fda.gov/medical-devices/postmarket-requirements-devices/quality-management-system-regulation-qmsr",
+      "version_date": "2026-02-02",
+      "content_sha256": "9fff46a027d6c452f60d58f2fedf461bdf66d955ff76e828229ae53fb1976217",
+      "retrieved_at": "2026-09-23T21:11:14+00:00",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda:qmsr-faq": {
+      "title": "FDA QMSR Frequently Asked Questions",
+      "url": "https://www.fda.gov/medical-devices/quality-management-system-regulation-qmsr/quality-management-system-regulation-frequently-asked-questions",
+      "version_date": "2026-02-02",
+      "content_sha256": "19ea03e25639234c6c18ab1a6d97a2bc8ce7831e94c080530b4a479caa3fedf5",
+      "retrieved_at": "2026-09-23T21:11:14+00:00",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda:cp-7382.850": {
+      "title": "FDA Compliance Program 7382.850, Inspection of Medical Device Manufacturers (2026)",
+      "url": "https://www.fda.gov/media/80195/download",
+      "version_date": "2026-02-02",
+      "content_sha256": "6846f3cc1f1b6cb644848a90338a0ce699f8da49222ce530c1aa770d45eaa64c",
+      "retrieved_at": "2026-09-23T21:11:16+00:00",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda:510k-change-2017": {
+      "title": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017)",
+      "url": "https://www.fda.gov/media/99812/download",
+      "version_date": "2017-10-25",
+      "content_sha256": "3d52072bd38c79bca2d593d5dab33a0e6f1a51d64b2440eeed974d93b4351837",
+      "retrieved_at": "2026-09-23T21:11:17+00:00",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    }
+  },
+  "sections": {
+    "qmsr-preamble:overview": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Summary of the Major Provisions",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "We are amending part 820, primarily through incorporating by reference the quality management system requirements of ISO 13485.\\1\\ We have determined that the requirements in ISO 13485 are, when taken in totality, substantially similar to the requirements of the QS regulation, providing a similar level of assurance in a firm's quality management system and ability to consistently manufacture devices that are safe and effective and otherwise in compliance with the Federal Food, Drug, and Cosmetic Act",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:design-applicability": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Applicability of Design and Development (Clause 7.3)",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "Manufacturers of class II and class III, and certain class I devices described in Sec. 820.10(c) must comply with the requirements in Design and Development, Clause 7.3 and its subclauses in ISO 13485. We further note that the device and development requirements, like other QMSR requirements, apply to all finished devices, including devices licensed under section 351(a) of the Public Health Service Act (42 U.S.C. 262(a)) (e.g., in vitro diagnostic devices that are intended for blood donor screening and compatibility testing).",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:design-records": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — DHF/DMR Records Under ISO 13485",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "Similarly, consistent with the former DHF, Clause 7.3.10 requires the design and development file to contain or reference all the records necessary to establish compliance with design and development requirements, including the design and development plan and design and development procedures. Clause 4.2.3 requires that the MDF will contain or reference the procedures and specifications that are current on the manufacturing floor. The final design output from the design phase, which is maintained or referenced in the design and development file, forms the basis or starting point for the MDF. Previously, product specifications, procedures for manufacturing, measuring, monitoring, and servicing, and requirements for installation were included in a manufacturer's DMR and will now be located in the manufacturer's MDF.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:risk-management": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Risk Management Throughout the QMS",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "FDA agrees that the embedded risk management concepts present in ISO 13485 emphasize risk management throughout the total product life cycle. Although the integration of risk management principles throughout ISO 13485 does not represent a shift in philosophy, the explicit integration of risk management throughout the clauses of ISO 13485 more explicitly establishes a requirement for risk management to occur throughout a QMS and should help industry develop more effective total product life-cycle risk management systems.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:design-changes": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Documenting Design Changes (Clause 7.3.9)",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "For all devices to which design and development requirements apply, FDA does not expect manufacturers to maintain records of all changes proposed during the very early stages of the design process. However, a successful QMS requires a manufacturer to document design changes made after the initial design inputs have been approved, and/or any changes made to correct design deficiencies once the design has been released to production.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:design-review": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Design Review and Validation Under Clauses 7.3.3 and 7.3.4",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "FDA considers that a successful quality management system under Clause 7.3.3 and 7.3.4. will require a similar approach to design review and validation as those developed under the QS regulation. For instance, the purpose of conducting design reviews during the design phase is to ensure that the design satisfies the design input requirements for the intended use of the device and the needs of the user. Design review includes the review of design verification data to determine whether the design outputs meet functional and operational requirements, the design is compatible with components and other accessories, the safety requirements are achieved, the reliability and maintenance requirements are met, the labeling and other regulatory requirements are met, and the manufacturing, installation, and servicing requirements are compatible with the design specifications. Design reviews should be conducted at major decision points during the design phase. For a large manufacturer, design review provides an opportunity for all those who may have an impact on the quality of the device to provide input, including manufacturing, quality assurance, purchasing, sales, and servicing divisions. While small manufacturers may not have the broad range of disciplines found in a large company, and the need to coordinate and control technical interfaces may be lessened, the principles of design review still apply. The requirements under Sec. 820.30(e) allow small manufacturers to tailor a design review that is appropriate to their individual needs.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:clinical-evaluation": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Clinical or Performance Evaluation in Validation (Clause 7.3.7)",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "Because the regulatory requirements that may apply to clinical evaluations are provided elsewhere, FDA declines to list such information in the codified portion of this rulemaking. Clinical studies of medical devices in the United States are generally governed by the set of regulations and requirements known as good clinical practices. These regulations apply to the manufacturers, sponsors, clinical investigators, institutional review boards, and the medical device. The primary regulations in Title 21 that govern the conduct of clinical studies of medical devices include, but are not limited to, part 812 (21 CFR part 812), Investigational Device Exemptions; 21 CFR part 50, Protection of Human Subjects; 21 CFR part 56, Institutional Review Boards; and 21 CFR part 54, Financial Disclosure by Clinical Investigators.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:capa": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Corrective and Preventive Action (Clauses 8.5.2, 8.5.3)",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "FDA continues to believe that it is essential that the manufacturer establish procedures for implementing corrective action and preventive action, and that these procedures must provide for control and action to be taken on quality systems, processes, and products with actual or potential nonconformities. The degree of corrective or preventive action taken to eliminate or minimize actual or potential nonconformities shall be appropriate to the magnitude of the problem and commensurate with the risks encountered, and includes processes such as developing procedures for assessing the risk, the actions that need to be taken for different levels of risk, and the methods that correct or prevent the problem from recurring.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qmsr-preamble:capa-effectiveness": {
+      "label": "QMSR Final Rule Preamble (89 FR 7496) — Verifying CAPA Effectiveness",
+      "source": "fr:89-FR-7496",
+      "citation": "89 FR 7496",
+      "text": "FDA clarifies that consistent with the former QS regulation, as part of an effective quality system, manufacturers must verify or validate corrective and preventive actions to ensure that such actions are effective and do not adversely affect the finished device.",
+      "authority_level": "A4",
+      "content_class": "P",
+      "status": "current"
+    },
+    "qsreg:820.30(b)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(b) Design and Development Planning",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(b) (superseded)",
+      "status": "superseded",
+      "text": "(b) Design and development planning. Each manufacturer shall establish and maintain plans that describe or reference the design and development activities and define responsibility for implementation. The plans shall identify and describe the interfaces with different groups or activities that provide, or result in, input to the design and development process. The plans shall be reviewed, updated, and approved as design and development evolves.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.30(c)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(c) Design Input",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(c) (superseded)",
+      "status": "superseded",
+      "text": "(c) Design input. Each manufacturer shall establish and maintain procedures to ensure that the design requirements relating to a device are appropriate and address the intended use of the device, including the needs of the user and patient. The procedures shall include a mechanism for addressing incomplete, ambiguous, or conflicting requirements. The design input requirements shall be documented and shall be reviewed and approved by a designated individual(s). The approval, including the date and signature of the individual(s) approving the requirements, shall be documented.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.30(d)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(d) Design Output",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(d) (superseded)",
+      "status": "superseded",
+      "text": "(d) Design output. Each manufacturer shall establish and maintain procedures for defining and documenting design output in terms that allow an adequate evaluation of conformance to design input requirements. Design output procedures shall contain or make reference to acceptance criteria and shall ensure that those design outputs that are essential for the proper functioning of the device are identified. Design output shall be documented, reviewed, and approved before release. The approval, including the date and signature of the individual(s) approving the output, shall be documented.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.30(f)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(f) Design Verification",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(f) (superseded)",
+      "status": "superseded",
+      "text": "(f) Design verification. Each manufacturer shall establish and maintain procedures for verifying the device design. Design verification shall confirm that the design output meets the design input requirements. The results of the design verification, including identification of the design, method(s), the date, and the individual(s) performing the verification, shall be documented in the DHF.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.30(g)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(g) Design Validation",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(g) (superseded)",
+      "status": "superseded",
+      "text": "(g) Design validation. Each manufacturer shall establish and maintain procedures for validating the device design. Design validation shall be performed under defined operating conditions on initial production units, lots, or batches, or their equivalents. Design validation shall ensure that devices conform to defined user needs and intended uses and shall include testing of production units under actual or simulated use conditions. Design validation shall include software validation and risk analysis, where appropriate. The results of the design validation, including identification of the design, method(s), the date, and the individual(s) performing the validation, shall be documented in the DHF.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.30(i)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(i) Design Changes",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(i) (superseded)",
+      "status": "superseded",
+      "text": "(i) Design changes. Each manufacturer shall establish and maintain procedures for the identification, documentation, validation or where appropriate verification, review, and approval of design changes before their implementation.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.30(j)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.30(j) Design History File",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.30(j) (superseded)",
+      "status": "superseded",
+      "text": "(j) Design history file. Each manufacturer shall establish and maintain a DHF for each type of device. The DHF shall contain or reference the records necessary to demonstrate that the design was developed in accordance with the approved design plan and the requirements of this part.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.70(b)": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.70(b) Production and Process Changes",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.70(b) (superseded)",
+      "status": "superseded",
+      "text": "(b) Production and process changes. Each manufacturer shall establish and maintain procedures for changes to a specification, method, process, or procedure. Such changes shall be verified or where appropriate validated according to § 820.75, before implementation and these activities shall be documented. Changes shall be approved in accordance with § 820.40.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "qsreg:820.100": {
+      "label": "Former QS Regulation (superseded 2026-02-02) — 21 CFR 820.100 Corrective and Preventive Action",
+      "source": "ecfr:21-820-qsreg",
+      "citation": "21 CFR 820.100 (superseded)",
+      "status": "superseded",
+      "text": "§ 820.100 Corrective and preventive action. (a) Each manufacturer shall establish and maintain procedures for implementing corrective and preventive action. The procedures shall include requirements for: (1) Analyzing processes, work operations, concessions, quality audit reports, quality records, service records, complaints, returned product, and other sources of quality data to identify existing and potential causes of nonconforming product, or other quality problems. Appropriate statistical methodology shall be employed where necessary to detect recurring quality problems; (2) Investigating the cause of nonconformities relating to product, processes, and the quality system; (3) Identifying the action(s) needed to correct and prevent recurrence of nonconforming product and other quality problems; (4) Verifying or validating the corrective and preventive action to ensure that such action is effective and does not adversely affect the finished device; (5) Implementing and recording changes in methods and procedures needed to correct and prevent identified quality problems; (6) Ensuring that information related to quality problems or nonconforming product is disseminated to those directly responsible for assuring the quality of such product or the prevention of such problems; and (7) Submitting relevant information on identified quality problems, as well as corrective and preventive actions, for management review. (b) All activities required under this section, and their results, shall be documented.",
+      "authority_level": "A1",
+      "content_class": "P"
+    },
+    "820.10": {
+      "label": "21 CFR §820.10 — Requirements for a Quality Management System (QMSR)",
+      "source": "ecfr:21-820",
+      "citation": "21 CFR 820.10",
+      "text": "§ 820.10 Requirements for a quality management system. A manufacturer subject to this part as described by § 820.1(a) must: (a) Document. Document a quality management system that complies with the applicable requirements of ISO 13485 (incorporated by reference, see § 820.7) and other applicable requirements of this part; and (b) Applicable regulatory requirements. Comply, as appropriate, with the other applicable regulatory requirements in this title, including, but not limited to the following, to fully comply with the listed ISO 13485 Clause: (1) For Clause 7.5.8 in ISO 13485, Identification, the manufacturer must document a system to assign unique device identification to the medical device in accordance with the requirements of part 830 of this chapter. (2) For Clause 7.5.9.1 in ISO 13485, Traceability—General, the manufacturer must document procedures for traceability in accordance with the requirements of part 821 of this chapter, if applicable. (3) For Clause 8.2.3 in ISO 13485, Reporting to regulatory authorities, the manufacturer must notify FDA of complaints that meet the reporting criteria of part 803 of this chapter. (4) For Clauses 7.2.3, 8.2.3, and 8.3.3, advisory notices shall be handled in accordance with the requirements of part 806 of this chapter. (c) Design and development. Manufacturers of class II, class III, and those class I devices listed in paragraph (c)(1) of this section and table 1 to paragraph (c)(2) of this section must comply with the requirements in Design and Development, Clause 7.3 and its Subclauses in ISO 13485. The class I devices are as follows: (1) Devices automated with computer software; and (2) The devices listed in the following table: Table 1 to Paragraph ( c )(2) Section Device 868.6810 Catheter, Tracheobronchial Suction. 878.4460 Glove, Non-powdered Surgeon's. 880.6760 Restraint, Protective. 892.5650 System, Applicator, Radionuclide, Manual. 892.5740 Source, Radionuclide Teletherapy. (d) Devices that support or sustain life. Manufacturers of devices that support or sustain life, the failure of which to perform when properly used in accordance with instructions for use provided in the labeling can be reasonably expected to result in a significant injury, must comply with the requirements in Traceability for Implantable Devices, Clause 7.5.9.2 in ISO 13485, in addition to all other applicable requirements in this part, as appropriate. (e) Enforcement. The failure to comply with any applicable requirement in this part renders a device adulterated under section 501(h) of the Federal Food, Drug, and Cosmetic Act. Such a device, as well as any person responsible for the failure to comply, is subject to regulatory action.",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "820.35": {
+      "label": "21 CFR §820.35 — Control of Records (QMSR)",
+      "source": "ecfr:21-820",
+      "citation": "21 CFR 820.35",
+      "text": "§ 820.35 Control of records. In addition to the requirements of Clause 4.2.5 in ISO 13485 (incorporated by reference, see § 820.7), Control of Records, the manufacturer must include the following information in certain records: (a) Records of complaints. In addition to Clause 8.2.2 in ISO 13485, Complaint Handling, the manufacturer shall maintain records of the review, evaluation, and investigation for any complaints involving the possible failure of a device, labeling, or packaging to meet any of its specifications. If an investigation has already been performed for a similar complaint, another investigation is not necessary, and the manufacturer shall maintain records documenting justification for not performing such investigation. For complaints that must be reported to FDA under part 803 of this chapter, complaints that a manufacturer determines must be investigated, and complaints that the manufacturer investigated regardless of those requirements, the manufacturer must record the following information: (1) The name of the device; (2) The date the complaint was received; (3) Any unique device identifier (UDI) or universal product code (UPC), and any other device identification(s); (4) The name, address, and phone number of the complainant; (5) The nature and details of the complaint; (6) Any correction or corrective action taken; and (7) Any reply to the complainant. (b) Records of servicing activities. In adhering to Clause 7.5.4 in ISO 13485, Servicing Activities, the manufacturer must record the following information, at a minimum, for servicing activities: (1) The name of the device serviced; (2) Any UDI or UPC, and any other device identification(s); (3) The date of service; (4) The individual(s) who serviced the device; (5) The service performed; and (6) Any test and inspection data. (c) Unique Device Identification. In addition to the requirements of Clauses 7.5.1, 7.5.8, and 7.5.9 in ISO 13485, the UDI must be recorded for each medical device or batch of medical devices. (d) Confidentiality. Records deemed confidential by the manufacturer may be marked to aid FDA in determining whether information may be disclosed under the public information regulation in part 20 of this chapter.",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "807.81": {
+      "label": "21 CFR §807.81 — When a Premarket Notification Submission Is Required",
+      "source": "ecfr:21-807",
+      "citation": "21 CFR 807.81",
+      "text": "§ 807.81 When a premarket notification submission is required. (a) Except as provided in paragraph (b) of this section, each person who is required to register his establishment pursuant to § 807.20 must submit a premarket notification submission to the Food and Drug Administration at least 90 days before he proposes to begin the introduction or delivery for introduction into interstate commerce for commercial distribution of a device intended for human use which meets any of the following criteria: (1) The device is being introduced into commercial distribution for the first time; that is, the device is not of the same type as, or is not substantially equivalent to, (i) a device in commercial distribution before May 28, 1976, or (ii) a device introduced for commercial distribution after May 28, 1976, that has subsequently been reclassified into class I or II. (2) The device is being introduced into commercial distribution for the first time by a person required to register, whether or not the device meets the criteria in paragraph (a)(1) of this section. (3) The device is one that the person currently has in commercial distribution or is reintroducing into commercial distribution, but that is about to be significantly changed or modified in design, components, method of manufacture, or intended use. The following constitute significant changes or modifications that require a premarket notification: (i) A change or modification in the device that could significantly affect the safety or effectiveness of the device, e.g., a significant change or modification in design, material, chemical composition, energy source, or manufacturing process. (ii) A major change or modification in the intended use of the device. (b)(1) A premarket notification under this subpart is not required for a device for which: (i) A premarket approval application under section 515 of the act, or for which a petition to reclassify under section 513(f)(2) of the act, is pending before the Food and Drug Administration, or (ii) There is a predetermined change control plan (PCCP) cleared under section 515C of the act, provided that the change is consistent with the PCCP. (2) The appropriate FDA Center Director may determine that the submission and grant of a written request for an exception or alternative under § 801.128 or § 809.11 of this chapter satisfies the requirement in paragraph (a)(3) of this section. (c) In addition to complying with the requirements of this part, owners or operators of device establishments that manufacture radiation-emitting electronic products, as defined in § 1000.3 of this chapter, shall comply with the reporting requirements of part 1002 of this chapter. [42 FR 42526, Aug. 23, 1977, as amended at 72 FR 73601, Dec. 28, 2007; 89 FR 18792, Mar. 15, 2024]",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "862.1215": {
+      "label": "21 CFR §862.1215 — Creatine Kinase or Isoenzymes Test System (regulation under which FDA classifies troponin assays, product code MMI)",
+      "source": "ecfr:21-862",
+      "citation": "21 CFR 862.1215",
+      "text": "§ 862.1215 Creatine phosphokinase/creatine kinase or isoenzymes test system. (a) Identification. A creatine phosphokinase/creatine kinase or isoenzymes test system is a device intended to measure the activity of the enzyme creatine phosphokinase or its isoenzymes (a group of enzymes with similar biological activity) in plasma and serum. Measurements of creatine phosphokinase and its isoenzymes are used in the diagnosis and treatment of myocardial infarction and muscle diseases such as progressive, Duchenne-type muscular dystrophy. (b) Classification. Class II.",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "493.1253": {
+      "label": "42 CFR §493.1253 — CLIA: Establishment and Verification of Performance Specifications",
+      "source": "ecfr:42-493",
+      "citation": "42 CFR 493.1253",
+      "text": "§ 493.1253 Standard: Establishment and verification of performance specifications. (a) Applicability. Laboratories are not required to verify or establish performance specifications for any test system used by the laboratory before April 24, 2003. (b)(1) Verification of performance specifications. Each laboratory that introduces an unmodified, FDA-cleared or approved test system must do the following before reporting patient test results: (i) Demonstrate that it can obtain performance specifications comparable to those established by the manufacturer for the following performance characteristics: (A) Accuracy. (B) Precision. (C) Reportable range of test results for the test system. (ii) Verify that the manufacturer's reference intervals (normal values) are appropriate for the laboratory's patient population. (2) Establishment of performance specifications. Each laboratory that modifies an FDA-cleared or approved test system, or introduces a test system not subject to FDA clearance or approval (including methods developed in-house and standardized methods such as text book procedures), or uses a test system in which performance specifications are not provided by the manufacturer must, before reporting patient test results, establish for each test system the performance specifications for the following performance characteristics, as applicable: (i) Accuracy. (ii) Precision. (iii) Analytical sensitivity. (iv) Analytical specificity to include interfering substances. (v) Reportable range of test results for the test system. (vi) Reference intervals (normal values). (vii) Any other performance characteristic required for test performance. (3) Determination of calibration and control procedures. The laboratory must determine the test system's calibration procedures and control procedures based upon the performance specifications verified or established under paragraph (b)(1) or (b)(2) of this section. (c) Documentation. The laboratory must document all activities specified in this section. [68 FR 3703, Jan. 24, 2003; 68 FR 50724, Aug. 22, 2003]",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "493.1255": {
+      "label": "42 CFR §493.1255 — CLIA: Calibration and Calibration Verification",
+      "source": "ecfr:42-493",
+      "citation": "42 CFR 493.1255",
+      "text": "§ 493.1255 Standard: Calibration and calibration verification procedures. Calibration and calibration verification procedures are required to substantiate the continued accuracy of the test system throughout the laboratory's reportable range of test results for the test system. Unless otherwise specified in this subpart, for each applicable test system the laboratory must do the following: (a) Perform and document calibration procedures— (1) Following the manufacturer's test system instructions, using calibration materials provided or specified, and with at least the frequency recommended by the manufacturer; (2) Using the criteria verified or established by the laboratory as specified in § 493.1253(b)(3)— (i) Using calibration materials appropriate for the test system and, if possible, traceable to a reference method or reference material of known value; and (ii) Including the number, type, and concentration of calibration materials, as well as acceptable limits for and the frequency of calibration; and (3) Whenever calibration verification fails to meet the laboratory's acceptable limits for calibration verification. (b) Perform and document calibration verification procedures— (1) Following the manufacturer's calibration verification instructions; (2) Using the criteria verified or established by the laboratory under § 493.1253(b)(3)— (i) Including the number, type, and concentration of the materials, as well as acceptable limits for calibration verification; and (ii) Including at least a minimal (or zero) value, a mid-point value, and a maximum value near the upper limit of the range to verify the laboratory's reportable range of test results for the test system; and (3) At least once every 6 months and whenever any of the following occur: (i) A complete change of reagents for a procedure is introduced, unless the laboratory can demonstrate that changing reagent lot numbers does not affect the range used to report patient test results, and control values are not adversely affected by reagent lot number changes. (ii) There is major preventive maintenance or replacement of critical parts that may influence test performance. (iii) Control materials reflect an unusual trend or shift, or are outside of the laboratory's acceptable limits, and other means of assessing and correcting unacceptable control values fail to identify and correct the problem. (iv) The laboratory's established schedule for verifying the reportable range for patient test results requires more frequent calibration verification.",
+      "authority_level": "A1",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda-qmsr:inspections": {
+      "label": "FDA Quality Management System Regulation (QMSR) web page — QMSR Inspections",
+      "source": "fda:qmsr-page",
+      "citation": "FDA QMSR web page",
+      "text": "The FDA has a new inspection process that aligns with the requirements of the Quality Management System Regulation (QMSR). On February 2, 2026, the FDA stopped using the Quality System Inspection Technique (QSIT) for device inspections and began utilizing the inspection process described in the updated Inspection of Medical Device Manufacturers Compliance Program: 7382.850. On February 2, 2026, the FDA stopped using the following documents: Inspection of Medical Device Manufacturers (7382.845) and Medical Device PMA Preapproval and PMA Postmarket Inspections (7383.001).",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda-qmsr:exemptions-ide": {
+      "label": "FDA Quality Management System Regulation (QMSR) web page — CGMP Exemptions and IDE Devices",
+      "source": "fda:qmsr-page",
+      "citation": "FDA QMSR web page",
+      "text": "Exemption from the CGMP requirements does not exempt manufacturers of finished devices from keeping complaint files or from general requirements concerning records required by 21 CFR 820.35. Medical devices manufactured under an investigational device exemption (IDE) are not exempt from design and development requirements under 21 CFR 820.10(c) of the QMSR and the requirements in ISO 13485, Design and Development, Clause 7 and its subclauses.",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda-qmsr-faq:pre-qmsr-records": {
+      "label": "FDA QMSR Frequently Asked Questions — Q7, Records Reviewed on or After February 2, 2026",
+      "source": "fda:qmsr-faq",
+      "citation": "FDA QMSR FAQ",
+      "text": "To help determine compliance with the QMSR, FDA investigators may review records that are part of the manufacturer’s QMS, including those created before February 2, 2026. As set forth in the preamble to the final rule, the requirements of the QS regulation and the QMSR are substantially similar. A manufacturer may find it useful to complete some type of comparative analysis to demonstrate documents and records created prior to the QMSR effective date meet the QMSR requirements.",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda-qmsr-faq:audit-records": {
+      "label": "FDA QMSR Frequently Asked Questions — Q8, Management Review, Quality Audit, and Supplier Audit Records",
+      "source": "fda:qmsr-faq",
+      "citation": "FDA QMSR FAQ",
+      "text": "Yes. The QMSR gives the FDA the authority to inspect management review, quality audits, and supplier audit reports. The exceptions that existed in the QS regulation at § 820.180(c) are not maintained in the QMSR. As set forth in the preamble to the final rule, since manufacturers are required to provide such documents to other regulators, they will not be additionally burdened by making these records available to FDA inspectors. Such records are maintained in the regular course of business and should be readily available upon inspection.",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "fda-qmsr-faq:iso-access": {
+      "label": "FDA QMSR Frequently Asked Questions — Q12, Access to ISO 13485:2016 and ISO 9000:2015 Clause 3",
+      "source": "fda:qmsr-faq",
+      "citation": "FDA QMSR FAQ",
+      "text": "The standards can be accessed in a read-only format at the American National Standards Institute (ANSI) Incorporated by Reference (IBR) Portal https://ibr.ansi.org/Standards/iso1.aspx",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "cp7382850:qms-areas": {
+      "label": "FDA Compliance Program 7382.850, Inspection of Medical Device Manufacturers (2026) — Risk-Based Inspection Process",
+      "source": "fda:cp-7382.850",
+      "citation": "FDA CP 7382.850",
+      "text": "The risk-based inspection process aligns with the QMSR and evaluates related requirements with a focus on risks to the patient and/or user. To facilitate a focus on risk and to reflect the relationship of QMS processes, the risk-based inspection process organizes the QMSR requirements into 6 QMS Areas and 4 Other Applicable FDA Requirements (OAFRs).",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "cp7382850:inspection-model-2": {
+      "label": "FDA Compliance Program 7382.850, Inspection of Medical Device Manufacturers (2026) — Inspection Model 2, Minimum Elements",
+      "source": "fda:cp-7382.850",
+      "citation": "FDA CP 7382.850",
+      "text": "Inspection Model 2 Identify product risks that could adversely impact patients and/or users and evaluate the following elements, at minimum*: QMS Area: Change Control Element: Product and Process Changes QMS Area: Design and Development Element: Design and Development Inputs Element: Design and Development Outputs Element: Design and Development Review Element: Design and Development Verification Element: Design and Development Validation Element: Design and Development Software Validation Element: Design and Development Transfer QMS Area: Management Oversight Element: Management Review Element: Medical Device File Element: Planning of Product Realization QMS Area: Measurement, Analysis, and Improvement Element: Analysis of Data Element: Control of Nonconforming Product Element: Complaint Handling Element: Feedback Element: Internal Audits Element: Corrective Action Element: Preventive Action QMS Area: Production and Service Provision Element: Validation of Processes for Production and Service Provision Element: Control of Production and Service Provision Element: Identification and Traceability Element: (for sterile products) Sterile Medical Devices and Validation of Processes for Sterilization and Sterile Barrier Systems QMS Area: Outsourcing and Purchasing Element: Outsourcing OAFR: Medical Device Reporting OAFR: Reports of Corrections and Removals OAFR: Medical Device Tracking Requirements OAFR: Unique Device Identification",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "cp7382850:change-control": {
+      "label": "FDA Compliance Program 7382.850, Inspection of Medical Device Manufacturers (2026) — Attachment A, Change Control QMS Area",
+      "source": "fda:cp-7382.850",
+      "citation": "FDA CP 7382.850",
+      "text": "Change Control QMS Area Purpose: To ensure changes are adequately evaluated for risk and impact on products and processes prior to implementation. QMS Area Element Requirements QMS Changes Clauses 4.1.4, 4.2.4, 4.2.5, 5.4.2, 5.6.1, 5.6.2, 5.6.3, 8.5.1 Software Changes Clauses 4.1.6, 7.5.6, 7.6 Product and Process Changes Clauses 4.1.4, 7.2.2, 7.3.9, 7.3.10, 7.5.6, 7.5.7 Purchasing Changes Clauses 7.4.2, 7.4.3",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "cp7382850:design-development": {
+      "label": "FDA Compliance Program 7382.850, Inspection of Medical Device Manufacturers (2026) — Attachment A, Design and Development QMS Area",
+      "source": "fda:cp-7382.850",
+      "citation": "FDA CP 7382.850",
+      "text": "Design and Development QMS Area Purpose: To ensure the manufacturer’s design and development activities result in safe and effective medical device that meets its intended use. QMS Area Element Requirements Customer Related Processes 21 CFR 820.10(b)(4) and Clauses 7.2.1, 7.2.2, 7.2.3 Design and Development General Clause 7.3.1 Design and Development Planning Clause 7.3.2 Design and Development Inputs Clause 7.3.3 Design and Development Outputs Clause 7.3.4 Design and Development Review Clause 7.3.5 Design and Development Verification Clause 7.3.6 Design and Development Software Validation Clause 7.3.7 Design and Development Validation Clause 7.3.7 Design and Development Transfer Clause 7.3.8 Control of Design and Development Changes Clause 7.3.9 Design and Development Files Clause 7.3.10",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "cp7382850:measurement-analysis-improvement": {
+      "label": "FDA Compliance Program 7382.850, Inspection of Medical Device Manufacturers (2026) — Attachment A, Measurement, Analysis, and Improvement QMS Area",
+      "source": "fda:cp-7382.850",
+      "citation": "FDA CP 7382.850",
+      "text": "Measurement, Analysis, and Improvement QMS Area Purpose: To ensure monitoring, measurement, analysis, and improvement activities are effective in identifying and reducing risks that impact the product and/or the QMS. QMS Area Element Requirements Measurement, Analysis, and Improvement - General Clauses 8.1, 8.5.1 Feedback Clause 8.2.1 Complaint Handling 21 CFR 820.10(b)(3)(4), 21 CFR 820.35, and Clauses 8.2.2, 8.2.3 Internal Audits Clause 8.2.4 Monitoring and Measurement of Processes Clause 8.2.5 Monitoring and Measurement of Product Clause 8.2.6 Control of Nonconforming Product 21 CFR 820.10(b)(4) and Clauses 8.3.1, 8.3.2, 8.3.3, 8.3.4 Analysis of Data Clause 8.4 Corrective Action Clause 8.5.2 Preventive Action Clause 8.5.3",
+      "authority_level": "A6",
+      "content_class": "P",
+      "status": "current"
+    },
+    "510k-change:qmsr-note": {
+      "label": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017) — QMSR Notice",
+      "source": "fda:510k-change-2017",
+      "citation": "FDA 510(k) Change Guidance (2017)",
+      "text": "This guidance document was issued prior to the effective date of the final rule. FDA encourages manufacturers to review the current QMSR to ensure compliance with the relevant regulatory requirements.",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    },
+    "510k-change:risk-based-assessment": {
+      "label": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017) — Guiding Principle 2, Initial Risk-Based Assessment",
+      "source": "fda:510k-change-2017",
+      "citation": "FDA 510(k) Change Guidance (2017)",
+      "text": "2. Initial risk-based assessment – To determine whether a change or modification could significantly affect the safety or effectiveness of a device, the manufacturer should first conduct a risk-based assessment, using the guidance below, of whether the change could significantly affect the device’s safety or effectiveness, either positively or negatively. This risk-based assessment should identify and analyze all new risks and changes in existing risks resulting from the device change, and lead to an initial decision whether or not submission of a new 510(k) is required.",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    },
+    "510k-change:vv-role": {
+      "label": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017) — Guiding Principle 5, Role of Verification and Validation",
+      "source": "fda:510k-change-2017",
+      "citation": "FDA 510(k) Change Guidance (2017)",
+      "text": "5. The role of testing (i.e., verification and validation activities) in evaluating whether a change could significantly affect safety and effectiveness - If the initial decision following the risk-based assessment is that submission of a new 510(k) is not required, this decision should be confirmed by successful, routine verification and validation activities. If routine verification and validation activities produce any unexpected results, any prior decision that submission of a new 510(k) is not required should be reconsidered, as discussed in B5.4 for non-IVD devices and D4 for IVD devices. “Routine” activities in this context refer to the original design verification and validation activities that were done to assess the original device design. Because 21 CFR 807.81(a)(3) requires submission of a new 510(k) for a change that “could significantly affect safety or effectiveness,” if the result of a risk-based assessment is that a change could significantly affect safety or effectiveness, submission of a new 510(k) is required even if routine verification and validation activities are conducted successfully without any unexpected results. Note that verification and validation requirements apply for all devices subject to 21 CFR 820.30, and must be conducted regardless of whether submission of a new 510(k) is required.",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    },
+    "510k-change:ivd-operating-principle": {
+      "label": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017) — D1, IVD Changes to the Operating Principle",
+      "source": "fda:510k-change-2017",
+      "citation": "FDA 510(k) Change Guidance (2017)",
+      "text": "D1 . Does the change alter the operating principle of the IVD? In most cases, a technology, engineering, performance, or material change that alters the operating principle of an IVD could significantly affect safety and effectiveness, in which case submission of a new 510(k) is required. Submission of a new 510(k) is not necessarily required for all changes in technology, engineering, performance, or materials for IVDs that alter the operating principle of an IVD. However, when such changes introduce novel technology that could have an impact on the ability of the device to extract, isolate, or detect the analyte(s) and could therefore affect the value assigned to the specimen, or could produce deviations in device performance that would result in modified reporting of performance in labeling, submission of a new 510(k) is likely required. Examples of changes in technology, engineering, performance, or materials that likely alter the operating principle of the IVD and for which a new 510(k) is likely required include: • changes from radioimmunoassays (RIA) to non-RIAs; • changes in the antibody; • changes in detection reagents; • changes in critical reaction components; and • changes in conjugates. Examples of changes in technology, engineering, performance, or materials that might alter the operating principle of the IVD include: • changes from liquid to solid reagent; • changes in calibration materials and quality control materials; • changes in substrates; • changes in specimen type; • changes in specimen processing; and • changes in incubation times and temperatures. Examples of changes in technology, engineering, performance, or materials of an IVD which do not ordinarily affect the operating principle of the IVD include: • changes to external packaging; • changes to use a new lot or batch for the same antibody or enzyme; • changes to a new vendor for the same reagent; and • changes in concentrations of packaged reagents provided the same diluted concentration was used in the assay. If such a change to an IVD does not alter the operating principle of the IVD, proceed to D2.",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    },
+    "510k-change:ivd-risk-assessment": {
+      "label": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017) — D3, IVD Risk-Based Assessment",
+      "source": "fda:510k-change-2017",
+      "citation": "FDA 510(k) Change Guidance (2017)",
+      "text": "For IVDs, a manufacturer’s risk -based assessment identifies new risks or significantly modified existing risks when the risk-based assessment (1) indicates that the performance of the modified test could significantly change from the previously cleared performance claims or (2) identifies new risks or significantly modified existing risks, apart from performance. If a change could affect the analytical performance of a device, particular attention should be paid to the effect on device performance around the clinical decision point(s) (i.e., cut-offs, cut-points). When new risks or significantly modified existing risks have been identified, in general, the change to the IVD could significantly affect safety or effectiveness of the device and submission of a new 510(k) is likely required. This includes a change that is clinically significant in terms of clinical decision making.",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    },
+    "510k-change:documentation": {
+      "label": "FDA Guidance, Deciding When to Submit a 510(k) for a Change to an Existing Device (2017) — Appendix B, Documentation",
+      "source": "fda:510k-change-2017",
+      "citation": "FDA 510(k) Change Guidance (2017)",
+      "text": "If a manufacturer determines that the device change(s) does not require submission of a new 510(k), it should document the decision-making process and the basis for that conclusion. The documentation should be prepared in a way that an FDA investigator or other third party can understand what the change is and the rationale underlying the manufacturer’s conclusion that submission of a new 510(k) is not required. The QS regulation also requires that manufacturers establish and maintain procedures to control all documents that are required by the QS regulation. 21 CFR 820.40. Manufacturers may specify the type and level of documentation needed to evaluate changes that may or may not require submission of a new 510(k), as well as the methods of review and approval of such decisions. Manufacturers may also develop standard operating procedures (SOPs) and other documents that allow for different levels of documentation, depending on the nature of the change that must be evaluated. FDA notes that only highlighting the flowcharts in this guidance document, or simply answering “yes” or “no” to each question without further details or justification, is not sufficient documentation.",
+      "authority_level": "A5",
+      "content_class": "P",
+      "status": "current"
+    }
+  }
+}

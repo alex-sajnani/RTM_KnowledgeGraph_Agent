@@ -2,8 +2,8 @@
 conftest.py — pytest configuration for the RTM Knowledge Graph Agent test suite.
 
 Adds src/ to sys.path (bare imports, matching how app.py runs) and changes
-the working directory to the project root so that regulations_cache.json is
-found by the module-level load_regulations() call in agent.py / sme_agent.py.
+the working directory to the project root so relative paths resolve as they
+do when the app runs.
 """
 
 import os

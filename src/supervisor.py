@@ -54,6 +54,7 @@ from sme_agent import (
     notifications_from_dicts,
 )
 from graph import RTMGraph, NodeType
+from regulations import DEVICE_CLASSES, DEFAULT_DEVICE_CLASS, PATHWAY_SUMMARY
 
 __all__ = [
     "build_supervisor",
@@ -61,6 +62,8 @@ __all__ = [
     "CHANGE_TYPES",
     "NON_SUBSTANTIVE_CHANGE_TYPES",
     "DEFAULT_CHANGE_TYPE",
+    "DEVICE_CLASSES",
+    "DEFAULT_DEVICE_CLASS",
 ]
 
 
@@ -72,6 +75,7 @@ class SupervisorState(TypedDict):
     changed_node_id: str
     change_description: str
     change_type: str             # reviewer-attested type; drives risk downgrade
+    device_class: str            # from the verified device definition; selects pathway grounding, never risk level
     impact_result: dict          # raw AgentState dict from the impact sub-agent
     sme_result: dict             # raw SMEState dict from the SME router sub-agent
     risk_level: str              # "low" | "high" | "critical"
@@ -86,18 +90,16 @@ class SupervisorState(TypedDict):
 # ---------------------------------------------------------------------------
 
 # Change-type classification — drives the deterministic risk downgrade.
-# The reviewer attests the change type at submit time; a non-substantive type
-# (documentation-only, no change) downgrades the structural ceiling to "low",
-# while substantive types leave the ceiling intact. This replaces an LLM
-# inference of "is this substantive?" with an auditable human attestation.
+# The reviewer attests at submit time whether the change is substantive. A
+# documentation-only change downgrades the structural ceiling to "low"; a
+# substantive change leaves it intact. This replaces an LLM inference of "is
+# this substantive?" with an auditable human attestation.
 CHANGE_TYPES = [
-    "Functional change",
-    "Corrective / CAPA action",
+    "Substantive change",
     "Documentation only",
-    "No change",
 ]
-NON_SUBSTANTIVE_CHANGE_TYPES = {"Documentation only", "No change"}
-DEFAULT_CHANGE_TYPE = "Functional change"
+NON_SUBSTANTIVE_CHANGE_TYPES = {"Documentation only"}
+DEFAULT_CHANGE_TYPE = "Substantive change"
 
 
 class RiskAssessment(BaseModel):
@@ -153,6 +155,7 @@ def _assess_risk(
     change_type: str,
     change_description: str,
     impact_result: dict,
+    device_class: str = DEFAULT_DEVICE_CLASS,
 ) -> RiskAssessment:
     """
     Produce the scored risk result: a code-decided level plus a plain-English
@@ -183,7 +186,8 @@ def _assess_risk(
 
     user_prompt = (
         f"Change type: {change_type}\n"
-        f"Change description: {change_description}\n\n"
+        f"Change description: {change_description}\n"
+        f"Device classification: {PATHWAY_SUMMARY.get(device_class, device_class)}\n\n"
         f"Determined risk level: {risk_level.upper()}\n"
         f"Structural ceiling (maximum risk from topology): {ceiling.upper()}\n\n"
         f"Structural triggers:\n"
@@ -196,6 +200,11 @@ def _assess_risk(
             "this as a non-substantive change, so the level is LOW. Explain why the "
             "structural triggers do not apply given the change type.\n\n"
             if downgraded else ""
+        )
+        + (
+            "End the rationale with one sentence on what the stated device classification "
+            "implies for premarket submission of this change.\n\n"
+            if not downgraded else ""
         )
         + f"Write a 2-3 sentence rationale for the {risk_level.upper()} rating, and list "
         f"the top 3 immediate actions the review team must take. Only cite node IDs listed above."
@@ -285,6 +294,7 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
             state.get("change_type", DEFAULT_CHANGE_TYPE),
             state["change_description"],
             state["impact_result"],
+            state.get("device_class", DEFAULT_DEVICE_CLASS),
         )
         return {
             **state,
@@ -349,6 +359,7 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
             "change_description": state["change_description"],
             "changed_node_id": changed_id,
             "changed_node_title": changed_title,
+            "device_class": state.get("device_class", DEFAULT_DEVICE_CLASS),
             "sme_notifications": [],
             "team_briefings": {},
         }
@@ -392,6 +403,7 @@ def build_supervisor(graph: RTMGraph, checkpointer: Any) -> Any:
             changed_node_title=changed_title,
             change_description=state["change_description"],
             change_type=state.get("change_type", DEFAULT_CHANGE_TYPE),
+            device_class=state.get("device_class", DEFAULT_DEVICE_CLASS),
             timestamp=datetime.now(timezone.utc).isoformat(),
             impacted_nodes=impacted,
             vv_invalidations=impact.get("vv_invalidations", []),
@@ -445,6 +457,7 @@ def run_full_analysis(
     resume_payload: dict | None = None,
     supervisor: Any = None,
     change_type: str = DEFAULT_CHANGE_TYPE,
+    device_class: str = DEFAULT_DEVICE_CLASS,
 ) -> tuple[ImpactReport | None, dict | None, str]:
     """
     Run the full multi-agent change impact pipeline.
@@ -472,7 +485,11 @@ def run_full_analysis(
                     is called (useful for standalone/test use).
         change_type: Reviewer-attested change type (one of CHANGE_TYPES). A
                      non-substantive type downgrades the risk level to "low";
-                     ignored on resume. Defaults to "Functional change".
+                     ignored on resume. Defaults to "Substantive change".
+        device_class: Device classification (one of DEVICE_CLASSES). Selects the
+                      premarket-pathway grounding for the Quality/RA briefing and
+                      risk explanation; never affects the risk level. Ignored on
+                      resume. Defaults to "Class II".
 
     Returns:
         (ImpactReport, None, thread_id)       — analysis complete
@@ -493,6 +510,7 @@ def run_full_analysis(
             "changed_node_id": changed_node_id,
             "change_description": change_description,
             "change_type": change_type,
+            "device_class": device_class,
             "impact_result": {},
             "sme_result": {},
             "risk_level": "",

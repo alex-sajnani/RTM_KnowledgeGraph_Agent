@@ -5,7 +5,7 @@ Ingests unstructured regulatory text (SOPs, FDA guidance, change logs, CLSI stan
 and extracts RTM-compatible nodes and edges using structured LLM prompts.
 
 Each extracted relationship includes a confidence score (0.0–1.0).
-All extraction events are audit-logged per QMSR §820.180 records requirements.
+All extraction events are audit-logged per ISO 13485 §4.2.5 / QMSR §820.35 records requirements.
 
 Output is a list of ExtractionResult objects that can be hydrated directly
 into an RTMGraph instance after human review.
@@ -28,9 +28,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from graph import EdgeType, HIERARCHY_LEVEL, NodeStatus, NodeType, RTMGraph
-from regulations import load_regulations, build_prompt_context
+from regulations import CORE_QMSR, load_regulations, build_prompt_context
 
-_regulations = load_regulations()
 
 
 # ---------------------------------------------------------------------------
@@ -130,17 +129,17 @@ RTM GRAPH STRUCTURE RULES — apply these to every edge you extract:
    before assigning source and target.
 """
 
-SYSTEM_PROMPT = f"""You are a regulatory document analyst specializing in FDA medical device
+_SYSTEM_PROMPT_TEMPLATE = """You are a regulatory document analyst specializing in FDA medical device
 compliance under FDA QMSR (21 CFR Part 820) and ISO 13485:2016. Your job is to read
 structured RTM (Requirements Traceability Matrix) entities.
 
-{build_prompt_context(_regulations, ["820.30"])}
+{regulatory_context}
 
-Ground all regulatory reasoning in the verbatim eCFR text above — rely on the exact section text
+Ground all regulatory reasoning in the verbatim regulatory text above — rely on the exact section text
 supplied rather than your own training-knowledge recollection of the regulation, and never
 paraphrase or invent regulatory language.
 
-{GRAPH_STRUCTURE_RULES}
+{graph_structure_rules}
 
 You must return a valid JSON object — nothing else. No preamble, no markdown fences.
 
@@ -202,6 +201,14 @@ Edge types you can assign:
 Do NOT use "satisfies" or "mitigates" — use linked_to instead.
 
 Confidence scores: 0.0 (very uncertain) to 1.0 (explicit in document)."""
+
+
+def system_prompt() -> str:
+    """Extraction system prompt, grounded in the current regulatory snapshot."""
+    return _SYSTEM_PROMPT_TEMPLATE.format(
+        regulatory_context=build_prompt_context(load_regulations(), CORE_QMSR),
+        graph_structure_rules=GRAPH_STRUCTURE_RULES,
+    )
 
 EXTRACTION_PROMPT_TEMPLATE = """Extract all RTM entities and relationships from the following document text.
 
@@ -639,7 +646,7 @@ def _infer_required_test_results(
     Enforce VP → TR chain completeness within a single extraction result.
 
     Every V&V Protocol ultimately requires a Test Result as objective evidence
-    (QMSR §820.30(f)/(g)). When a document describes a protocol the team plans to
+    (ISO 13485 §7.3.6/§7.3.7 (QMSR §820.10)). When a document describes a protocol the team plans to
     author but the result report does not yet exist — "the lab WILL produce a test
     result" — no Test Result is extracted (the system prompt forbids extracting
     TR nodes for future/planned reports). That leaves the V&V loop open and
@@ -693,7 +700,7 @@ def _infer_required_test_results(
         ))
 
         # Close the V&V loop: the Test Result verifies the Design Input that the
-        # protocol's Design Output implements (QMSR §820.30(f)). Trace VP ← DO ← DI
+        # protocol's Design Output implements (ISO 13485 §7.3.6 (QMSR §820.10)). Trace VP ← DO ← DI
         # through the extracted edges and add a `verifies` back-edge TR → DI. This
         # is the documented accepted cycle, so add_to_graph exempts it from the
         # cycle check below.
@@ -719,7 +726,7 @@ def _infer_required_test_results(
                 target_id=di_id,
                 edge_type=EdgeType.VERIFIES,
                 confidence=0.0,
-                rationale=f"V&V loop closure: Test Result {tr_id} verifies Design Input {di_id} (QMSR §820.30(f)).",
+                rationale=f"V&V loop closure: Test Result {tr_id} verifies Design Input {di_id} (ISO 13485 §7.3.6 (QMSR §820.10)).",
             ))
 
     return nodes + extra_nodes, edges + extra_edges
@@ -860,7 +867,7 @@ class RTMDocumentExtractor:
     LLM-powered extractor that converts unstructured regulatory text
     into RTM node and edge candidates.
 
-    All extraction events are logged per QMSR §820.180. Human review of
+    All extraction events are logged per ISO 13485 §4.2.5 / QMSR §820.35. Human review of
     extracted entities is required before graph hydration (enforced by the
     add_to_graph method requiring explicit confirmation).
     """
@@ -904,7 +911,7 @@ class RTMDocumentExtractor:
                 max_tokens=2048,
             )
             messages = [
-                SystemMessage(content=SYSTEM_PROMPT),
+                SystemMessage(content=system_prompt()),
                 HumanMessage(content=prompt),
             ]
             response = llm.invoke(messages)
@@ -1006,7 +1013,7 @@ class RTMDocumentExtractor:
                 # Reject any edge that would introduce a cycle: if target can
                 # already reach source, adding source→target closes a loop.
                 # EXCEPTION: `verifies` (Test Result → Design Input) is the
-                # documented V&V loop-closure back-edge (QMSR §820.30(f)) — it is
+                # documented V&V loop-closure back-edge (ISO 13485 §7.3.6 (QMSR §820.10)) — it is
                 # meant to close the DI→DO→VP→TR→DI loop, so it is exempt.
                 if (
                     edge.edge_type != EdgeType.VERIFIES
@@ -1135,7 +1142,7 @@ reported LoD values between 2.0 and 2.6 pg/mL, marginally exceeding the approved
 specification. Emerging clinical evidence from the ESC 0h/1h HEART pathway study
 (published March 2026) demonstrates that a tighter LoD of ≤ 1.2 pg/mL improves
 rule-out sensitivity from 96.8% to 99.1% in the 0h cohort. FDA TPLC guidance requires
-real-time monitoring of performance metrics for Class III IVD devices.
+real-time monitoring of performance metrics for this Class II IVD device.
 
 Proposed Change:
 Design Input DI-001 (Analytical Sensitivity — LoD) revised from ≤ 2.0 pg/mL
@@ -1143,7 +1150,7 @@ to ≤ 1.2 pg/mL across all manufacturing lots. This is a performance improvemen
 change that tightens the analytical sensitivity requirement.
 
 Regulatory Framework:
-This change is subject to FDA QMSR §820.30(i) design change controls.
+This change is subject to QMSR design change controls (ISO 13485 §7.3.9 via 21 CFR 820.10).
 
 Impact Assessment:
 - V&V Protocol VP-001 (LoD/LoQ Verification, CLSI EP17-A2) must be re-executed
@@ -1159,7 +1166,7 @@ effect until CR-089 is approved.
     """,
 
     "qmsr_guidance_excerpt.txt": (
-        "REGULATORY TEXT — verbatim from eCFR (ecfr.gov)\n\n"
-        + build_prompt_context(_regulations, ["820.30", "820.100", "820.40", "820.180"])
+        "REGULATORY TEXT — verbatim from eCFR (ecfr.gov) and the QMSR final rule (89 FR 7496)\n\n"
+        + build_prompt_context(load_regulations(), CORE_QMSR + ["qmsr-preamble:design-applicability", "820.35"])
     ),
 }

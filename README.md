@@ -12,20 +12,20 @@ FDA device development requires bidirectional traceability:
 ```
 Design control: User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results
 ```
-Some teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence or trigger supplement review cannot proceed without explicit documented sign-off.
+Some teams manage this in spreadsheets. When a design input changes, someone has to manually trace every downstream obligation, assess the regulatory risk, and figure out who to notify. This project replaces that manual process with a multi-agent LLM pipeline that includes a guardrail: changes that invalidate V&V evidence cannot proceed without explicit documented sign-off.
 
 **Six core capabilities:**
 
 1. **RTM Query Bar** — ask plain-English questions about any node, its history, dependencies, or compliance status directly from the dashboard; the LLM answers against the full live graph context
 ![](assets/dashboard.png)
-3. **Multi-Agent Change Impact** — select any RTM node, attest the change type (functional / corrective / documentation-only / no change), describe the change, and the supervisor runs: Change Impact Agent (traverse → classify → report) → risk scoring → escalation gate (if critical) → SME Router Agent (team-specific briefings)
-4. **Critical-Risk Escalation Gate** — changes that invalidate V&V protocols or trigger supplement review are automatically classified as critical; the pipeline pauses and requires a named reviewer to approve or reject before SME briefings are generated
+2. **Multi-Agent Change Impact** — select any RTM node, attest whether the change is substantive or documentation-only, describe the change, and the supervisor runs: Change Impact Agent (traverse → classify → report) → risk scoring → escalation gate (if critical) → SME Router Agent (team-specific briefings)
+3. **Critical-Risk Escalation Gate** — changes that invalidate existing V&V evidence are automatically classified as critical; the pipeline pauses and requires a named reviewer to approve or reject before SME briefings are generated
 ![](assets/change_impact.png)
-6. **SME Outreach Flow** — each affected team receives a card with an LLM briefing in their domain vocabulary and an approve button; the human approval gate prevents any status update without documented sign-off
+4. **SME Outreach Flow** — each affected team receives a card with an LLM briefing in their domain vocabulary and an approve button; the human approval gate prevents any status update without documented sign-off
 ![](assets/sme_briefing.png)
-8. **Interactive Graph Explorer** — vis.js hierarchical dependency graph with double-click node detail panels, same-level edge curving to prevent overlap, and root-node subgraph filtering
+5. **Interactive Graph Explorer** — vis.js hierarchical dependency graph with double-click node detail panels, same-level edge curving to prevent overlap, and root-node subgraph filtering
 ![](assets/graph_explorer.png)
-9. **Audit Readiness Dashboard** — live completeness score, orphan detection, V&V gap report, and supplement flag monitoring
+6. **Audit Readiness Dashboard** — live completeness score, orphan detection, V&V gap report, and FDA inspection readiness by Compliance Program 7382.850 QMS Area
 ![](assets/audit.png)
 
 ---
@@ -80,11 +80,19 @@ rtm-knowledge-graph-agent/
 │   ├── sme_agent.py          # SME Router sub-agent
 │   ├── graph.py              # RTMGraph class, node/edge types, seed data
 │   ├── extractor.py          # LLM document extraction module
-│   └── regulations.py        # eCFR fetch + cache; injects verbatim CFR text into LLM prompts
+│   ├── regulations.py        # Loads the pinned regulatory snapshot; deterministic prompt grounding
+│   ├── regulatory_refresh.py # Source fetchers, live update check, reviewer-approved snapshot update
+│   ├── inspection.py         # FDA inspection readiness by CP 7382.850 QMS Area
+│   └── claim_check.py        # Claim, citation, and copyright check on every AI output
 ├── tests/
 │   ├── conftest.py           # pytest: sets CWD to project root, adds src/ to sys.path
-│   └── test_all.py           # 150 tests: graph, agent, supervisor, extractor, SME router (all LLM calls mocked)
-├── regulations_cache.json    # Auto-generated; verbatim eCFR sections, refreshed every 7 days
+│   └── test_all.py           # 214 tests: graph, agents, grounding, update check, inspection readiness, claim check (LLM + network mocked)
+├── data/
+│   ├── regulatory_snapshot.json  # Committed, version-pinned public-domain regulatory text, tagged by authority level
+│   ├── standards_registry.json   # Copyrighted standards: metadata only (no text)
+│   └── device_definition.json    # Verified device definition: MMI, 21 CFR 862.1215, Class II, 510(k)
+├── scripts/
+│   └── refresh_regulatory_snapshot.py  # Rebuilds the snapshot from eCFR, Federal Register, FDA
 ├── .streamlit/
 │   └── config.toml           # Streamlit theme config
 ├── requirements.txt
@@ -117,7 +125,7 @@ Each team's briefing is independent of the others, so all of them are generated 
 
 ## Seed Dataset
 
-The app loads a representative RTM for a **high-sensitivity cardiac Troponin I (hs-cTnI) immunoassay** — a Class III IVD device under  P240052 — covering:
+The app loads a representative RTM for a **high-sensitivity cardiac Troponin I (hs-cTnI) immunoassay** — an IVD with product code MMI, classified under 21 CFR 862.1215 as Class II (510(k) pathway), taken from a verified device definition — covering:
 
 - 2 User Needs (AMI detection sensitivity, emergency TAT)
 - 2 Hazards (false negative result — missed AMI; erroneous result — sample interference)
@@ -133,15 +141,27 @@ The app loads a representative RTM for a **high-sensitivity cardiac Troponin I (
 
 ## Regulatory Context
 
-The following regulations (Note: Not an exhaustive regulatory list) are actively queried at startup via the [eCFR public API](https://www.ecfr.gov) (`ecfr.gov/api/versioner/v1`). Verbatim section text is injected into every LLM prompt at runtime and cached locally for 7 days (`regulations_cache.json`).
+Since **February 2, 2026**, FDA's Quality Management System Regulation (QMSR) has replaced the old Quality System regulation. It incorporates **ISO 13485:2016** by reference, so the former design-control, CAPA, document and records sections (§820.30, §820.100, §820.40, §820.180) no longer exist. The app cites the ISO 13485 clause each obligation now lives in, applied through 21 CFR 820.10 (for example, design verification is cited as `ISO 13485 §7.3.6 (QMSR §820.10)`). ISO 13485 is copyrighted, so it is cited by clause number and never quoted.
 
-> **Note — the regulations cache is intentional, not just a speed optimization.** `regulations_cache.json` is the authoritative store of *verbatim* CFR text, and the LLM is explicitly instructed to ground its compliance reasoning in this supplied text rather than its own training knowledge. This keeps every regulatory citation exact, auditable, and version-pinned (the cache records the eCFR retrieval date) and prevents the model from hallucinating or paraphrasing the regulation. The cache is the single source of regulatory truth the model pulls from.
+Every LLM prompt is grounded in **verbatim, version-pinned text** from `data/regulatory_snapshot.json`. The app never fetches regulations at runtime. `scripts/refresh_regulatory_snapshot.py` rebuilds the snapshot: it copies each excerpt verbatim using anchor phrases and fails loudly if a source has changed. It also records each source's URL, version date and SHA-256, so any update shows up as a reviewable git diff. The Audit page lists the snapshot's sources.
 
-| Section | Source | Scope |
-|---------|--------|-------|
-| 21 CFR §820.30 | FDA QMSR (21 CFR Part 820) | Design controls — bidirectional traceability requirement |
-| 21 CFR §820.40 | FDA QMSR (21 CFR Part 820) | Document controls |
-| 21 CFR §820.100 | FDA QMSR (21 CFR Part 820) | Corrective and preventive action (CAPA) |
-| 21 CFR §820.180 | FDA QMSR (21 CFR Part 820) | General records requirements |
-| 42 CFR §493.1253 | CLIA (42 CFR Part 493) | Establishment and verification of performance specifications (LoD/LoQ) |
-| 42 CFR §493.1255 | CLIA (42 CFR Part 493) | Calibration and calibration verification |
+Which text a prompt receives is decided **deterministically** by team and by device class, not by similarity search. That keeps every citation reproducible for an auditor.
+
+| Section | Source | Used for |
+|---------|--------|----------|
+| 21 CFR §820.10 | QMSR (eCFR) | Core QMS requirement; ISO 13485 incorporation; design-control applicability by class (§820.10(c)) |
+| 21 CFR §820.35 | QMSR (eCFR) | Control of records |
+| 89 FR 7496 excerpts | QMSR final rule preamble | DHF → design and development file (ISO 13485 §7.3.10); risk management; design-control applicability |
+| 21 CFR §862.1215 | eCFR | Classification regulation for troponin assays (product code MMI, Class II) |
+| 21 CFR §807.81 | eCFR | When a design change needs a new 510(k) |
+| FDA 510(k) change guidance excerpts | FDA (2017) | Risk-based assessment, the role of V&V, IVD decision logic (D1/D3), documentation |
+| 42 CFR §493.1253 | CLIA (eCFR) | Establishment and verification of performance specifications (LoD/LoQ) |
+| 42 CFR §493.1255 | CLIA (eCFR) | Calibration and calibration verification |
+| CP 7382.850 excerpts | FDA Compliance Program (2026) | How FDA inspects under the QMSR: QMS Areas, Inspection Model 2 minimum elements, element → ISO 13485 clause tables |
+| QMSR page and FAQ excerpts | FDA | QSIT retired on 2026-02-02; IDE devices still need design controls; which records investigators may review |
+
+**Keeping it current.** On the Audit page, **Check for regulatory updates** fetches eCFR, FDA's QMSR page and FAQ, Compliance Program 7382.850 and the 510(k) change guidance, and compares them to the pinned snapshot without changing anything. It reports three things: pinned text that changed (shown as a paragraph-level diff); sources whose content changed even though the pinned passages didn't (links to review for new material); and sources it couldn't check. A named reviewer must click **Apply update**. That rewrites only what changed, records who approved it, logs an audit event, and takes effect immediately in every prompt. Commit `data/regulatory_snapshot.json` afterwards to make it permanent. `python scripts/refresh_regulatory_snapshot.py` rebuilds the whole snapshot from scratch.
+
+**Copyright.** Only public-domain US government text is pinned and sent to the AI. ISO 13485, ISO 14971 and the CLSI standards are held as metadata only (designation, edition, FDA recognition number), and a claim check on every AI output flags quoted standard text, superseded citations, and "FDA requires" claims not backed by a regulation.
+
+**Inspection readiness.** Since February 2, 2026, FDA has inspected device manufacturers under Compliance Program 7382.850, which organizes the QMSR into QMS Areas made of elements tied to ISO 13485 clauses. The Audit page maps the RTM's gaps onto the elements it can evidence, in the Design and Development, Change Control, and Measurement, Analysis, and Improvement areas. Examples: an open verification loop becomes a *Design and Development Verification (Clause 7.3.6)* finding, and an unapproved impact analysis becomes a *Product and Process Changes* finding. Elements the RTM doesn't model are listed as not assessed, never shown as passing.

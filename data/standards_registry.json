@@ -1,0 +1,130 @@
+{
+  "_note": "Metadata for copyrighted standards (content class L, PRD §8). This file must never contain text from the standards themselves. Titles are bibliographic records as listed by FDA. Clause labels are public-domain element names from FDA Compliance Program 7382.850 Attachment A, not the standard's own clause titles.",
+  "recognition_verified_on": "2026-09-23",
+  "recognition_verified_against": "https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfStandards/search.cfm",
+  "standards": [
+    {
+      "reference_id": "STD-ISO13485-2016",
+      "designation": "ISO 13485:2016",
+      "title": "Medical devices — Quality management systems — Requirements for regulatory purposes",
+      "publisher": "ISO",
+      "edition": "Third edition, 2016-03-01",
+      "authority_level": "A2",
+      "status": "current",
+      "content_class": "L",
+      "authority_basis": "Incorporated by reference, 21 CFR 820.7(b); applied through 21 CFR 820.10",
+      "fda_recognition_number": null,
+      "fda_recognition_note": "Not in the FDA Recognized Consensus Standards database: incorporated by reference into the QMSR rather than recognized.",
+      "clauses_referenced": [
+        {
+          "clause": "7.3.2",
+          "public_label": "Design and Development Planning"
+        },
+        {
+          "clause": "7.3.3",
+          "public_label": "Design and Development Inputs"
+        },
+        {
+          "clause": "7.3.4",
+          "public_label": "Design and Development Outputs"
+        },
+        {
+          "clause": "7.3.6",
+          "public_label": "Design and Development Verification"
+        },
+        {
+          "clause": "7.3.7",
+          "public_label": "Design and Development Validation"
+        },
+        {
+          "clause": "7.3.9",
+          "public_label": "Control of Design and Development Changes"
+        },
+        {
+          "clause": "7.3.10",
+          "public_label": "Design and Development Files"
+        },
+        {
+          "clause": "8.5.2",
+          "public_label": "Corrective Action"
+        }
+      ],
+      "public_label_source": "FDA Compliance Program 7382.850, Attachment A",
+      "license_record_id": null,
+      "controlled_copy_location": null,
+      "read_only_access_url": "https://ibr.ansi.org/Standards/iso1.aspx"
+    },
+    {
+      "reference_id": "STD-ISO14971-2019",
+      "designation": "ISO 14971:2019",
+      "title": "Medical devices — Application of risk management to medical devices",
+      "publisher": "ISO",
+      "edition": "Third edition, 2019-12",
+      "authority_level": "A3",
+      "status": "current",
+      "content_class": "L",
+      "authority_basis": "FDA-recognized consensus standard; not incorporated by reference into the QMSR (89 FR 7496)",
+      "fda_recognition_number": "5-125",
+      "fda_recognition_extent": "Complete",
+      "fda_recognition_date": "2019-12-23",
+      "clauses_referenced": [],
+      "license_record_id": null,
+      "controlled_copy_location": null,
+      "read_only_access_url": null
+    },
+    {
+      "reference_id": "STD-CLSI-EP17-A2",
+      "designation": "CLSI EP17-A2",
+      "title": "Evaluation of Detection Capability for Clinical Laboratory Measurement Procedures; Approved Guideline — Second Edition",
+      "publisher": "CLSI",
+      "edition": "Second edition",
+      "authority_level": "A3",
+      "status": "current",
+      "content_class": "L",
+      "authority_basis": "FDA-recognized consensus standard (In Vitro Diagnostics)",
+      "fda_recognition_number": "7-233",
+      "fda_recognition_extent": "Complete",
+      "fda_recognition_date": "2013-01-15",
+      "clauses_referenced": [],
+      "license_record_id": null,
+      "controlled_copy_location": null,
+      "read_only_access_url": null
+    },
+    {
+      "reference_id": "STD-CLSI-EP05-A3",
+      "designation": "CLSI EP05-A3",
+      "title": "Evaluation of Precision of Quantitative Measurement Procedures; Approved Guideline — Third Edition (reaffirmed September 2019)",
+      "publisher": "CLSI",
+      "edition": "Third edition",
+      "authority_level": "A3",
+      "status": "current",
+      "content_class": "L",
+      "authority_basis": "FDA-recognized consensus standard (In Vitro Diagnostics)",
+      "fda_recognition_number": "7-251",
+      "fda_recognition_extent": "Complete",
+      "fda_recognition_date": "2015-08-14",
+      "clauses_referenced": [],
+      "license_record_id": null,
+      "controlled_copy_location": null,
+      "read_only_access_url": null
+    },
+    {
+      "reference_id": "STD-CLSI-EP07-ED3",
+      "designation": "CLSI EP07 (3rd Edition)",
+      "title": "Interference Testing in Clinical Chemistry",
+      "publisher": "CLSI",
+      "edition": "Third edition",
+      "authority_level": "A3",
+      "status": "current",
+      "content_class": "L",
+      "authority_basis": "FDA-recognized consensus standard (In Vitro Diagnostics)",
+      "fda_recognition_number": "7-275",
+      "fda_recognition_extent": "Complete",
+      "fda_recognition_date": "2018-09-17",
+      "clauses_referenced": [],
+      "license_record_id": null,
+      "controlled_copy_location": null,
+      "read_only_access_url": null
+    }
+  ]
+}

@@ -349,7 +349,7 @@ class RTMGraph:
     def is_verified(self, node_id: str) -> bool:
         """
         Whether a Design Input is verified — i.e. a *completed* Test Result closes
-        the loop with an incoming 'verifies' edge. Per QMSR §820.30(f), design
+        the loop with an incoming 'verifies' edge. Per ISO 13485 §7.3.6 (QMSR §820.10), design
         verification confirms the Design Output meets the Design Input via objective
         evidence; a pending_review/not_started/invalidated result does not count.
         """
@@ -366,7 +366,7 @@ class RTMGraph:
     def is_validated(self, node_id: str) -> bool:
         """
         Whether a User Need is validated — i.e. its design-control chain reaches a
-        *completed* Test Result (objective evidence). Per QMSR §820.30(g), design
+        *completed* Test Result (objective evidence). Per ISO 13485 §7.3.7 (QMSR §820.10), design
         validation confirms the device meets user needs. A chain with no downstream
         Test Result, or only pending/invalidated ones, is an open loop and cannot be
         considered validated.
@@ -407,13 +407,13 @@ class RTMGraph:
                     issue = (
                         f"Open loop — verifying Test Result(s) {statuses} are not in a "
                         "completed status (active/approved). Not yet verified "
-                        "(QMSR §820.30(f))."
+                        "(ISO 13485 §7.3.6 (QMSR §820.10))."
                     )
                 else:
                     issue = (
                         "Open loop — no Test Result has a 'verifies' edge to this "
                         "Design Input. Missing test results; not yet verified "
-                        "(QMSR §820.30(f))."
+                        "(ISO 13485 §7.3.6 (QMSR §820.10))."
                     )
                 gaps.append({
                     "id": nid,
@@ -436,13 +436,13 @@ class RTMGraph:
                     issue = (
                         f"Open loop — downstream Test Result(s) {statuses} are not in a "
                         "completed status (active/approved). Not yet validated "
-                        "(QMSR §820.30(g))."
+                        "(ISO 13485 §7.3.7 (QMSR §820.10))."
                     )
                 else:
                     issue = (
                         "Open loop — no Test Result exists anywhere in this User "
                         "Need's downstream chain. Missing test results; not yet "
-                        "validated (QMSR §820.30(g))."
+                        "validated (ISO 13485 §7.3.7 (QMSR §820.10))."
                     )
                 gaps.append({
                     "id": nid,
@@ -484,17 +484,17 @@ class RTMGraph:
             closed = self.is_validated(node_id)
             if closed:
                 verdict = (
-                    "Validated (QMSR §820.30(g)) — its design-control chain reaches a "
+                    "Validated (ISO 13485 §7.3.7 (QMSR §820.10)) — its design-control chain reaches a "
                     "completed Test Result."
                 )
             elif trs:
                 verdict = (
-                    "Not yet validated (QMSR §820.30(g)) — open loop; the Test "
+                    "Not yet validated (ISO 13485 §7.3.7 (QMSR §820.10)) — open loop; the Test "
                     "Result(s) in its chain are not in a completed status."
                 )
             else:
                 verdict = (
-                    "Not yet validated (QMSR §820.30(g)) — open loop; no Test Result "
+                    "Not yet validated (ISO 13485 §7.3.7 (QMSR §820.10)) — open loop; no Test Result "
                     "exists anywhere in its downstream chain."
                 )
             return {
@@ -515,17 +515,17 @@ class RTMGraph:
             closed = self.is_verified(node_id)
             if closed:
                 verdict = (
-                    "Verified (QMSR §820.30(f)) — a completed Test Result closes the "
+                    "Verified (ISO 13485 §7.3.6 (QMSR §820.10)) — a completed Test Result closes the "
                     "loop with a 'verifies' edge."
                 )
             elif verifiers:
                 verdict = (
-                    "Not yet verified (QMSR §820.30(f)) — open loop; the verifying "
+                    "Not yet verified (ISO 13485 §7.3.6 (QMSR §820.10)) — open loop; the verifying "
                     "Test Result(s) are not in a completed status."
                 )
             else:
                 verdict = (
-                    "Not yet verified (QMSR §820.30(f)) — open loop; no Test Result "
+                    "Not yet verified (ISO 13485 §7.3.6 (QMSR §820.10)) — open loop; no Test Result "
                     "has a 'verifies' edge to this Design Input."
                 )
             return {
@@ -624,13 +624,13 @@ class RTMGraph:
 
 
 # ---------------------------------------------------------------------------
-# Seed data loader — hs-cTnI immunoassay, regulatory submission P240052
+# Seed data loader — hs-cTnI immunoassay (product code MMI, 21 CFR 862.1215, Class II, 510(k))
 # ---------------------------------------------------------------------------
 
 def build_seed_graph() -> RTMGraph:
     """
     Build a representative RTM graph for a high-sensitivity cardiac Troponin I
-    (hs-cTnI) immunoassay subject to regulatory submission P240052.
+    (hs-cTnI) immunoassay: product code MMI, 21 CFR 862.1215, Class II, 510(k) pathway.
 
     Full dependency chain (edges flow in change-impact direction):
     User Needs → Design Inputs → Design Outputs → V&V Protocols → Test Results → CAPAs
@@ -655,7 +655,7 @@ def build_seed_graph() -> RTMGraph:
     g.add_node("DI-001", NodeType.DESIGN_INPUT, "Analytical Sensitivity — LoD ≤ 2.0 pg/mL",
                "Assay shall achieve a Limit of Detection (LoD) ≤ 2.0 pg/mL per CLSI EP17-A2, "
                "corresponding to the 99th percentile upper reference limit. "
-               "Per QMSR §820.30(c), this is a verified design input traceable to UN-001.",
+               "Per ISO 13485 §7.3.3 (QMSR §820.10), this is a verified design input traceable to UN-001.",
                metadata={"lod_pg_ml": 2.0, "method": "CLSI EP17-A2"})
     g.add_node("DI-002", NodeType.DESIGN_INPUT, "Turnaround Time ≤ 18 Minutes Sample-to-Result",
                "Time from sample aspiration to reportable result shall not exceed 18 minutes "
@@ -666,22 +666,22 @@ def build_seed_graph() -> RTMGraph:
     g.add_node("DO-001", NodeType.DESIGN_OUTPUT, "Capture/Detection Antibody Pair Spec v1.4",
                "Monoclonal antibody pair specification: epitope mapping, conjugation protocol, "
                "and lot release criteria. 48/50 production lots passed LoD verification at release. "
-               "Per QMSR §820.30(d), this design output is traceable to DI-001.",
+               "Per ISO 13485 §7.3.4 (QMSR §820.10), this design output is traceable to DI-001.",
                metadata={"version": "1.4", "lots_qualified": 48, "lots_tested": 50})
     g.add_node("DO-002", NodeType.DESIGN_OUTPUT, "Signal Quantification Algorithm Spec v2.1",
                "4PL curve-fitting model for fluorescence signal-to-concentration conversion. "
-               "Calibration range: 0.5–50,000 pg/mL. Algorithm version-controlled per QMSR §820.30(d).",
+               "Calibration range: 0.5–50,000 pg/mL. Algorithm version-controlled per ISO 13485 §7.3.4 (QMSR §820.10).",
                metadata={"version": "2.1", "calibration_range_pg_ml": [0.5, 50000]})
 
     # --- V&V Protocols ---
     g.add_node("VP-001", NodeType.VV_PROTOCOL, "VP-001: LoD/LoQ Verification — CLSI EP17-A2",
                "Verification protocol: 50 replicates × 3 reagent lots × 3 days at 4 concentration levels. "
                "Pass criterion: LoD ≤ 2.0 pg/mL with 95% detection probability. "
-               "Per QMSR §820.30(f), verification confirms DI-001 is met by DO-001.")
+               "Per ISO 13485 §7.3.6 (QMSR §820.10), verification confirms DI-001 is met by DO-001.")
     g.add_node("VP-002", NodeType.VV_PROTOCOL, "VP-002: Precision Validation — CLSI EP05-A3",
                "Validation protocol: repeatability, within-run, between-run, and between-lot precision "
                "across 20 days / 3 lots. Pass criterion: CV ≤ 5% at all QC levels. "
-               "Per QMSR §820.30(g), validation confirms fitness for intended clinical use.")
+               "Per ISO 13485 §7.3.7 (QMSR §820.10), validation confirms fitness for intended clinical use.")
 
     # --- Test Results ---
     g.add_node("TR-001A", NodeType.TEST_RESULT, "VP-001 Results — Lot 3 Non-Conformance",
@@ -712,7 +712,7 @@ def build_seed_graph() -> RTMGraph:
                "Mitigation: LoD ≤ 2.0 pg/mL specification (DI-001) and mandatory VP-001 "
                "re-verification after any analytical sensitivity specification change.")
     g.add_node("RC-002", NodeType.RISK_CONTROL, "CLSI EP07 — Interference Susceptibility Control",
-               "Interference testing per CLSI EP07-A3: hemolysis (H-index ≤ 200), "
+               "Interference testing per CLSI EP07 (3rd Edition): hemolysis (H-index ≤ 200), "
                "lipemia (L-index ≤ 300), icterus (bilirubin ≤ 20 mg/dL). "
                "All interferents tested at clinically relevant concentrations.")
 

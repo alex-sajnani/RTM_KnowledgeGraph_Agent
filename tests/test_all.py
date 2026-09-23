@@ -7,9 +7,14 @@ Sections:
   3. Supervisor risk routing       — 12 tests, structural ceiling fully deterministic
   4. Document extractor (extractor.py) — 25 tests, LLM mocked
   5. SME Router (sme_agent.py)     — 26 tests, LLM mocked where needed
+  6. Regulatory grounding (regulations.py) — pinned snapshot, device-class pathway
+  7. Regulatory update check (regulatory_refresh.py) — fetch mocked, reviewer-gated apply
+  8. FDA inspection readiness (inspection.py) — CP 7382.850 element mapping
+  9. PRD MVP — authority tags, standards metadata, claim check, device definition
 """
 
 import json
+import re
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -18,6 +23,7 @@ from agent import build_impact_agent, AgentState
 from supervisor import (
     _structural_risk_ceiling,
     _risk_level_for_change,
+    _assess_risk,
     NON_SUBSTANTIVE_CHANGE_TYPES,
     DEFAULT_CHANGE_TYPE,
 )
@@ -44,7 +50,27 @@ from sme_agent import (
     finalize_notifications_node,
     build_sme_agent,
     notifications_from_dicts,
+    team_system_prompt,
 )
+from regulations import (
+    CORE_QMSR,
+    DEFAULT_DEVICE_CLASS,
+    DEVICE_CLASSES,
+    PATHWAY_GROUNDING,
+    TEAM_GROUNDING,
+    build_prompt_context,
+    grounding_status,
+    load_regulations,
+    pathway_context,
+)
+from regulatory_refresh import (
+    SourceTextError,
+    apply_regulatory_updates,
+    check_regulatory_updates,
+    diff_sections,
+    excerpt,
+)
+from inspection import AREAS, ELEMENTS, assess_inspection_readiness, element_references, superseded_references
 
 
 # ===========================================================================
@@ -458,7 +484,7 @@ def test_snapshot_captures_state(g):
     assert len(snap["edges"]) == len(g.all_edges())
 
 
-# Accepted cycle via VERIFIES back-edge (QMSR §820.30(f) design decision)
+# Accepted cycle via VERIFIES back-edge (ISO 13485 §7.3.6 (QMSR §820.10) design decision)
 
 def test_vp001_has_verifies_back_edge_to_di001(g):
     assert g.has_path("VP-001", "DI-001") is True
@@ -566,14 +592,14 @@ def test_vv_action_cites_qmsr():
     result = _run_agent("DI-001")
     vv_nodes = [n for n in result["impacted_nodes"] if n["node_id"] == "VP-001"]
     assert vv_nodes
-    assert "820.30" in vv_nodes[0]["required_action"]
+    assert "ISO 13485 §7.3.6/§7.3.7 (QMSR §820.10)" in vv_nodes[0]["required_action"]
 
 
-def test_upstream_action_cites_qmsr_820_30b():
+def test_upstream_action_cites_design_traceability_clause():
     result = _run_agent("DI-001")
     upstream = [n for n in result["impacted_nodes"] if n.get("direction") == "upstream"]
     assert upstream
-    assert "820.30" in upstream[0]["required_action"]
+    assert "ISO 13485 §7.3.2 (QMSR §820.10)" in upstream[0]["required_action"]
 
 
 # ===========================================================================
@@ -651,13 +677,13 @@ def test_critical_beats_high_when_both_present():
 
 def test_substantive_change_keeps_critical_ceiling():
     assert _risk_level_for_change(
-        "Functional change", _impact(vv=["VP-001"])
+        "Substantive change", _impact(vv=["VP-001"])
     ) == "critical"
 
 
 def test_substantive_change_keeps_high_ceiling():
     assert _risk_level_for_change(
-        "Corrective / CAPA action", _impact(capa=["CAPA-018"])
+        "Substantive change", _impact(capa=["CAPA-018"])
     ) == "high"
 
 
@@ -673,16 +699,20 @@ def test_documentation_only_downgrades_critical_to_low():
     ) == "low"
 
 
-def test_no_change_downgrades_high_to_low():
+def test_documentation_only_downgrades_high_to_low():
     assert _risk_level_for_change(
-        "No change", _impact(capa=["CAPA-018"])
+        "Documentation only", _impact(capa=["CAPA-018"])
     ) == "low"
 
 
+def test_change_types_are_substantive_or_documentation_only():
+    from supervisor import CHANGE_TYPES
+    assert CHANGE_TYPES == ["Substantive change", "Documentation only"]
+
+
 def test_non_substantive_set_membership():
-    # Guard: both downgrade types must be recognized as non-substantive.
-    assert "Documentation only" in NON_SUBSTANTIVE_CHANGE_TYPES
-    assert "No change" in NON_SUBSTANTIVE_CHANGE_TYPES
+    # Guard: documentation-only is the one downgrade type; the default is substantive.
+    assert NON_SUBSTANTIVE_CHANGE_TYPES == {"Documentation only"}
     assert DEFAULT_CHANGE_TYPE not in NON_SUBSTANTIVE_CHANGE_TYPES
 
 
@@ -1521,7 +1551,7 @@ def test_notifications_from_dicts_roundtrip():
             "trigger_node_id": "CAPA-018",
             "trigger_node_type": NodeType.CAPA.value,
             "trigger_node_title": "CAPA-018",
-            "review_obligation": "Review CAPA scope per QMSR §820.100",
+            "review_obligation": "Review CAPA scope per ISO 13485 §8.5.2 (QMSR §820.10)",
             "llm_briefing": "Briefing text here.",
         }
     ]
@@ -1563,3 +1593,499 @@ def test_sme_map_covers_all_non_root_node_types():
         NodeType.DESIGN_OUTPUT.value,
     }
     assert expected_mapped == set(SME_NOTIFICATION_MAP.keys())
+
+
+# ===========================================================================
+# 6. Regulatory grounding — regulations.py
+# ===========================================================================
+
+def test_snapshot_loads_without_fallback():
+    assert grounding_status()["using_fallback"] is False
+    regs = load_regulations()
+    assert "ISO 13485" in regs["820.10"]
+
+
+def test_snapshot_holds_current_qmsr_not_superseded_qs_reg():
+    regs = load_regulations()
+    # §820.10(c) is the QMSR design-and-development applicability clause.
+    assert "Clause 7.3" in regs["820.10"]
+    for superseded in ("820.30", "820.40", "820.100", "820.180"):
+        assert superseded not in regs
+
+
+def test_every_grounding_reference_exists_in_snapshot():
+    regs = load_regulations()
+    referenced = set(CORE_QMSR)
+    for ids in TEAM_GROUNDING.values():
+        referenced |= set(ids)
+    for ids in PATHWAY_GROUNDING.values():
+        referenced |= set(ids)
+    assert referenced - set(regs) == set()
+
+
+def test_snapshot_sources_record_provenance():
+    for source in grounding_status()["sources"].values():
+        assert source["url"].startswith("https://")
+        assert source["version_date"]
+        assert len(source["content_sha256"]) == 64
+        assert source["retrieved_at"]
+
+
+def test_missing_snapshot_falls_back_to_stubs(tmp_path):
+    regs = load_regulations(tmp_path / "missing.json")
+    assert "820.10" in regs
+    assert grounding_status(tmp_path / "missing.json")["using_fallback"] is True
+
+
+def test_build_prompt_context_skips_unknown_and_dedupes():
+    regs = load_regulations()
+    ctx = build_prompt_context(regs, ["820.10", "820.10", "no-such-section"])
+    assert ctx.count("[820.10]") == 1
+    assert "no-such-section" not in ctx
+
+
+def test_pathway_grounding_covers_every_device_class():
+    assert set(PATHWAY_GROUNDING) == set(DEVICE_CLASSES)
+    assert DEFAULT_DEVICE_CLASS in DEVICE_CLASSES
+
+
+def test_pathway_context_class_ii_uses_510k_change_sources():
+    ctx = pathway_context(load_regulations(), "Class II")
+    assert "Device classification: Class II" in ctx
+    assert "[807.81]" in ctx and "[510k-change:ivd-risk-assessment]" in ctx
+
+
+@pytest.mark.parametrize("device_class", ["Class I", "Class III"])
+def test_pathway_context_unsupported_class_borrows_nothing(device_class):
+    ctx = pathway_context(load_regulations(), device_class)
+    assert f"Device classification: {device_class}" in ctx
+    assert "Class II 510(k) pathway only" in ctx
+    assert "[807.81]" not in ctx and "Regulatory Affairs" in ctx
+
+
+def test_library_is_scoped_to_the_class_ii_device():
+    regs = load_regulations()
+    assert DEVICE_CLASSES == ["Class II"] and DEFAULT_DEVICE_CLASS == "Class II"
+    assert "862.9" not in regs and "814.39" not in regs
+
+
+def test_quality_ra_prompt_includes_pathway_other_teams_do_not():
+    assert "[807.81]" in team_system_prompt("Quality/RA", "Class II")
+    assert "[807.81]" not in team_system_prompt("Bioinformatics", "Class II")
+
+
+def test_map_to_teams_send_carries_device_class():
+    state = _run_map_teams([_sme_node("CAPA-018", NodeType.CAPA.value)])
+    state["device_class"] = "Class II"
+    sends = map_to_teams(state)
+    assert sends[0].arg["device_class"] == "Class II"
+
+
+def test_brief_team_node_grounds_quality_ra_in_device_class_pathway():
+    state = _brief_team_state("Quality/RA", "CAPA-018", NodeType.CAPA.value)
+    state["device_class"] = "Class II"
+    mock_response = MagicMock()
+    mock_response.content = "briefing"
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = mock_response
+    with patch("sme_agent.ChatOpenAI", return_value=mock_llm):
+        brief_team_node(state)
+    system_message = mock_llm.invoke.call_args[0][0][0]
+    assert "[510k-change:documentation]" in system_message.content
+
+
+@pytest.mark.parametrize("device_class", ["Class II", "Class III"])
+def test_device_class_never_changes_risk_level(device_class):
+    impact = {"vv_invalidations": ["VP-001"], "capa_triggers": [], "impacted_nodes": []}
+    with patch("supervisor.ChatOpenAI", side_effect=Exception("offline")):
+        assessment = _assess_risk("Substantive change", "tighten LoD", impact, device_class)
+    assert assessment.risk_level == "critical"
+
+
+# ===========================================================================
+# 7. Regulatory update check — regulatory_refresh.py (network mocked)
+# ===========================================================================
+
+def _entry(text: str, label: str = "label") -> dict:
+    return {"label": label, "source": "ecfr:21-820", "citation": "21 CFR x", "text": text}
+
+
+@pytest.fixture
+def snapshot_copy(tmp_path):
+    from regulations import SNAPSHOT_PATH
+    path = tmp_path / "snapshot.json"
+    path.write_text(SNAPSHOT_PATH.read_text())
+    return path
+
+
+def _live(snapshot_path, prefix: str, overrides: dict[str, str] | None = None, content_changed: bool = False):
+    """Fake fetcher returning the pinned sections/sources under a source-ID prefix."""
+    snap = json.loads(snapshot_path.read_text())
+    overrides = overrides or {}
+    sections = {
+        sid: {**entry, "text": overrides.get(sid, entry["text"])}
+        for sid, entry in snap["sections"].items() if entry["source"].startswith(prefix)
+    }
+    sources = {
+        sid: {**src, "content_sha256": "0" * 64 if content_changed else src["content_sha256"]}
+        for sid, src in snap["sources"].items() if sid.startswith(prefix)
+    }
+    return lambda: (sections, sources)
+
+
+def _device_ok():
+    return {"status": "match"}
+
+
+def test_diff_sections_reports_only_changed_and_new():
+    pinned = {"a": _entry("(a) same."), "b": _entry("(a) old text. (b) kept.")}
+    fetched = {
+        "a": _entry("(a) same."),
+        "b": _entry("(a) new text. (b) kept."),
+        "c": _entry("(a) brand new."),
+    }
+    changes = {c.section_id: c for c in diff_sections(pinned, fetched)}
+    assert set(changes) == {"b", "c"}
+    assert changes["b"].status == "changed"
+    assert "-(a) old text." in changes["b"].diff
+    assert "+(a) new text." in changes["b"].diff
+    assert " (b) kept." in changes["b"].diff  # unchanged paragraph shown as context
+    assert changes["c"].status == "new"
+
+
+def test_excerpt_missing_anchor_raises():
+    with pytest.raises(SourceTextError):
+        excerpt("some regulatory text", "absent start", "text", source="test")
+
+
+def test_check_up_to_date(snapshot_copy):
+    fetchers = {"eCFR": _live(snapshot_copy, "ecfr:"), "CP": _live(snapshot_copy, "fda:cp-7382.850")}
+    check = check_regulatory_updates(snapshot_copy, fetchers, device_verifier=_device_ok)
+    assert check.up_to_date
+    assert check.checked == ["eCFR", "CP"]
+    assert check.errors == {}
+
+
+def test_check_detects_section_change_without_writing(snapshot_copy):
+    before = snapshot_copy.read_text()
+    fetchers = {"eCFR": _live(snapshot_copy, "ecfr:", {"820.35": "§ 820.35 Control of records. (a) Amended."})}
+    check = check_regulatory_updates(snapshot_copy, fetchers, device_verifier=_device_ok)
+    assert [c.section_id for c in check.changes] == ["820.35"]
+    assert snapshot_copy.read_text() == before
+
+
+def test_check_flags_source_change_when_excerpts_unchanged(snapshot_copy):
+    fetchers = {"FAQ": _live(snapshot_copy, "fda:qmsr-faq", content_changed=True)}
+    check = check_regulatory_updates(snapshot_copy, fetchers, device_verifier=_device_ok)
+    assert check.changes == []
+    assert [s.source_id for s in check.source_changes] == ["fda:qmsr-faq"]
+    assert not check.up_to_date
+
+
+def test_failing_source_is_reported_without_blocking_others(snapshot_copy):
+    def broken():
+        raise SourceTextError("[fda-qmsr:inspections] start anchor not found")
+    fetchers = {"Page": broken, "eCFR": _live(snapshot_copy, "ecfr:")}
+    check = check_regulatory_updates(snapshot_copy, fetchers, device_verifier=_device_ok)
+    assert "anchor not found" in check.errors["Page"]
+    assert check.checked == ["eCFR"]
+    assert check.up_to_date
+
+
+def test_apply_requires_reviewer(snapshot_copy):
+    fetchers = {"eCFR": _live(snapshot_copy, "ecfr:", {"820.35": "§ 820.35 amended."})}
+    check = check_regulatory_updates(snapshot_copy, fetchers, device_verifier=_device_ok)
+    with pytest.raises(ValueError):
+        apply_regulatory_updates(check, "  ", snapshot_copy)
+
+
+def test_apply_writes_only_changed_sections_with_provenance(snapshot_copy):
+    before = json.loads(snapshot_copy.read_text())
+    fetchers = {
+        "eCFR": _live(snapshot_copy, "ecfr:", {"820.35": "§ 820.35 amended."}),
+        "FAQ": _live(snapshot_copy, "fda:qmsr-faq", content_changed=True),
+    }
+    check = check_regulatory_updates(snapshot_copy, fetchers, device_verifier=_device_ok)
+    applied = apply_regulatory_updates(check, "J. Reviewer", snapshot_copy)
+
+    after = json.loads(snapshot_copy.read_text())
+    assert applied == ["820.35"]
+    assert after["sections"]["820.35"]["text"] == "§ 820.35 amended."
+    assert after["sections"]["820.10"] == before["sections"]["820.10"]
+    # Sources that were not fetched (Federal Register) are untouched.
+    assert after["sources"]["fr:89-FR-7496"] == before["sources"]["fr:89-FR-7496"]
+    assert after["sources"]["fda:qmsr-faq"]["content_sha256"] == "0" * 64
+    assert after["last_update"]["reviewer"] == "J. Reviewer"
+    assert after["last_update"]["sections"] == ["820.35"]
+    assert after["last_update"]["sources"] == ["fda:qmsr-faq"]
+    assert load_regulations(snapshot_copy)["820.35"] == "§ 820.35 amended."
+
+
+# ===========================================================================
+# 8. FDA inspection readiness — inspection.py (CP 7382.850)
+# ===========================================================================
+
+def _assessment(results, element):
+    return next(a for a in results if a.element == element)
+
+
+def test_inspection_elements_match_cp_7382_850_attachment_a():
+    # Element names and clause lists must be copied verbatim from the pinned CP text.
+    regs = load_regulations()
+    area_excerpt = {
+        "Change Control": regs["cp7382850:change-control"],
+        "Design and Development": regs["cp7382850:design-development"],
+        "Measurement, Analysis, and Improvement": regs["cp7382850:measurement-analysis-improvement"],
+    }
+    for area, element, requirements, _check, _basis in ELEMENTS:
+        assert f"{element} {requirements}" in area_excerpt[area], (area, element)
+
+
+def test_inspection_seed_graph_flags_open_loops_and_open_capa(g):
+    results = assess_inspection_readiness(g)
+    verification = _assessment(results, "Design and Development Verification")
+    validation = _assessment(results, "Design and Development Validation")
+    capa = _assessment(results, "Corrective Action")
+    assert verification.status == "gap" and any("DI-001" in f for f in verification.findings)
+    assert validation.status == "gap" and any("UN-001" in f for f in validation.findings)
+    assert capa.status == "gap" and any("CAPA-018" in f for f in capa.findings)
+    assert _assessment(results, "Design and Development Inputs").status == "clear"
+
+
+def test_inspection_unmodeled_elements_are_not_assessed(g):
+    results = assess_inspection_readiness(g)
+    assert _assessment(results, "Design and Development Transfer").status == "not_assessed"
+    assert _assessment(results, "Purchasing Changes").status == "not_assessed"
+
+
+def test_inspection_pending_impact_analysis_is_a_change_control_gap(g):
+    report = MagicMock(changed_node_id="DI-001", risk_level="critical",
+                       vv_invalidations=["VP-001"], capa_triggers=["CAPA-018"])
+    results = assess_inspection_readiness(g, [report])
+    changes = _assessment(results, "Product and Process Changes")
+    assert changes.status == "gap"
+    assert any("not been approved" in f for f in changes.findings)
+    assert any("VP-001" in f for f in changes.findings)
+    assert any("unapproved change" in f for f in _assessment(results, "Corrective Action").findings)
+
+
+def test_inspection_no_pending_changes_is_clear(g):
+    assert _assessment(assess_inspection_readiness(g), "Product and Process Changes").status == "clear"
+
+
+def test_inspection_areas_cover_all_elements():
+    assert {area for area, *_ in ELEMENTS} == set(AREAS)
+
+
+def test_quality_ra_prompt_grounded_in_change_control_area():
+    assert "[cp7382850:change-control]" in team_system_prompt("Quality/RA", "Class II")
+
+
+def test_quality_ra_user_prompt_requires_pathway_and_inspection_element():
+    state = _brief_team_state("Quality/RA", "CAPA-018", NodeType.CAPA.value)
+    state["device_class"] = "Class II"
+    mock_response = MagicMock(); mock_response.content = "briefing"
+    mock_llm = MagicMock(); mock_llm.invoke.return_value = mock_response
+    with patch("sme_agent.ChatOpenAI", return_value=mock_llm):
+        brief_team_node(state)
+    user_message = mock_llm.invoke.call_args[0][0][1].content
+    assert "(Class II)" in user_message and "new 510(k)" in user_message
+    assert "PMA" not in user_message
+    assert "Regulatory Affairs review" not in user_message  # fallback only for unsupported classes
+    assert "[cp7382850:change-control]" in user_message
+
+
+def test_quality_ra_requirements_flag_unsupported_class():
+    from sme_agent import quality_ra_requirements
+    assert "Regulatory Affairs review" in quality_ra_requirements("Class III")
+
+
+def test_other_teams_user_prompt_has_no_pathway_requirement():
+    state = _brief_team_state("Bioinformatics", "TR-001A", NodeType.TEST_RESULT.value)
+    mock_response = MagicMock(); mock_response.content = "briefing"
+    mock_llm = MagicMock(); mock_llm.invoke.return_value = mock_response
+    with patch("sme_agent.ChatOpenAI", return_value=mock_llm):
+        brief_team_node(state)
+    assert "Premarket submission" not in mock_llm.invoke.call_args[0][0][1].content
+
+
+def test_every_element_regulatory_reference_is_pinned(g):
+    regs = load_regulations()
+    for a in assess_inspection_readiness(g):
+        refs = element_references(a)
+        assert refs[0] == "820.10"
+        assert set(refs) <= set(regs), (a.element, set(refs) - set(regs))
+
+
+def test_iso_read_only_link_comes_from_fda_faq():
+    from regulations import ISO_13485_READ_ONLY_URL
+    assert ISO_13485_READ_ONLY_URL in load_regulations()["fda-qmsr-faq:iso-access"]
+
+
+def test_superseded_qs_regulation_is_pinned_and_labeled(g):
+    from regulations import SNAPSHOT_PATH
+    sections = json.loads(SNAPSHOT_PATH.read_text())["sections"]
+    for a in assess_inspection_readiness(g):
+        for sid in superseded_references(a):
+            assert sections[sid]["status"] == "superseded"
+            assert "superseded" in sections[sid]["label"].lower()
+    assert sections["qsreg:820.30(f)"]["text"].startswith("(f) Design verification.")
+
+
+def test_superseded_text_never_grounds_prompts_or_current_requirements(g):
+    from regulations import INSPECTION_GROUNDING
+    grounding = set(CORE_QMSR) | set(INSPECTION_GROUNDING)
+    for ids in list(TEAM_GROUNDING.values()) + list(PATHWAY_GROUNDING.values()):
+        grounding |= set(ids)
+    for a in assess_inspection_readiness(g):
+        grounding |= set(element_references(a))
+    assert not any(sid.startswith("qsreg:") for sid in grounding)
+
+
+def test_update_check_does_not_refetch_fixed_historical_sources():
+    from regulatory_refresh import ALL_FETCHERS, FETCHERS, fetch_superseded_qs_regulation, fetch_fr_preamble
+    assert fetch_superseded_qs_regulation not in FETCHERS.values()
+    assert fetch_fr_preamble not in FETCHERS.values()
+    assert fetch_superseded_qs_regulation in ALL_FETCHERS.values()
+
+
+def test_every_assessed_element_has_fda_commentary_or_superseded_equivalent(g):
+    for a in assess_inspection_readiness(g):
+        if a.status != "not_assessed":
+            assert superseded_references(a), a.element
+
+
+# ===========================================================================
+# 9. PRD MVP — authority tags, standards metadata, claim check, device definition
+# ===========================================================================
+
+from claim_check import check_output
+from regulations import GROUNDING_INSTRUCTION, load_device_definition, load_standards
+from regulatory_refresh import classify_source, verify_device_definition
+
+
+def test_every_snapshot_section_has_authority_class_and_status():
+    from regulations import SNAPSHOT_PATH
+    snap = json.loads(SNAPSHOT_PATH.read_text())
+    for sid, entry in snap["sections"].items():
+        assert entry["authority_level"] in {"A1", "A4", "A5", "A6"}, sid
+        assert entry["content_class"] == "P", sid
+        assert entry["status"] in {"current", "superseded"}, sid
+    for sid, src in snap["sources"].items():
+        assert src["authority_level"] and src["content_class"] == "P", sid
+
+
+def test_superseded_sections_are_tagged_superseded():
+    from regulations import SNAPSHOT_PATH
+    sections = json.loads(SNAPSHOT_PATH.read_text())["sections"]
+    assert all(e["status"] == "superseded" for k, e in sections.items() if k.startswith("qsreg:"))
+    assert all(e["status"] == "current" for k, e in sections.items() if not k.startswith("qsreg:"))
+
+
+def test_unclassified_source_is_rejected():
+    with pytest.raises(ValueError):
+        classify_source("blog:someone")
+
+
+def test_classification_regulation_862_1215_is_pinned():
+    text = load_regulations()["862.1215"]
+    assert "Class II" in text
+
+
+def test_standards_registry_holds_metadata_only():
+    standards = load_standards()
+    assert {s["designation"] for s in standards} == {
+        "ISO 13485:2016", "ISO 14971:2019", "CLSI EP17-A2", "CLSI EP05-A3", "CLSI EP07 (3rd Edition)"}
+    for s in standards:
+        assert s["content_class"] == "L"
+        assert not {"text", "requirement_text", "clause_text"} & set(s)
+        if s["authority_level"] == "A3":
+            assert re.fullmatch(r"\d+-\d+", s["fda_recognition_number"])
+
+
+def test_iso_13485_clause_labels_come_from_cp_7382_850():
+    iso = next(s for s in load_standards() if s["designation"] == "ISO 13485:2016")
+    labels = {c["clause"]: c["public_label"] for c in iso["clauses_referenced"]}
+    for area, element, requirements, check, _basis in ELEMENTS:
+        if check is None or requirements.count(",") or not requirements.startswith("Clause "):
+            continue
+        clause = requirements.removeprefix("Clause ")
+        if clause in labels and labels[clause] == element:
+            continue
+        # Elements sharing a clause (e.g. 7.3.7) must still map to a CP element name.
+        assert clause in labels, (element, clause)
+
+
+def test_prompt_context_excludes_non_public_domain_text(monkeypatch):
+    import regulations
+    fake = {"sections": {
+        "pd": {"label": "Public", "text": "public text", "content_class": "P", "authority_level": "A1", "status": "current"},
+        "lic": {"label": "Licensed", "text": "licensed text", "content_class": "L", "authority_level": "A2", "status": "current"},
+    }}
+    monkeypatch.setattr(regulations, "_snapshot_cache", fake)
+    ctx = build_prompt_context({"pd": "public text", "lic": "licensed text"}, ["pd", "lic"])
+    assert "public text" in ctx and "(A1, current)" in ctx
+    assert "licensed text" not in ctx
+    monkeypatch.setattr(regulations, "_snapshot_cache", None)
+
+
+def test_grounding_instruction_covers_authority_and_copyright():
+    assert "FDA recommends" in GROUNDING_INSTRUCTION
+    assert "CLSI" in GROUNDING_INSTRUCTION and "clause number" in GROUNDING_INSTRUCTION
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("Design changes must be documented per 21 CFR 820.30(i) before implementation.", "superseded_citation"),
+    ("FDA requires a new 510(k) under the 510(k) change guidance whenever the LoD changes.", "guidance_as_requirement"),
+    ("The QMSR requires full revalidation of every lot.", "unsupported_claim"),
+    ('ISO 13485 clause 7.3.6 states "the organization shall perform design and development verification in accordance with planned arrangements".', "possible_standard_text"),
+    ("Per [820.99] records must be kept.", "unknown_citation"),
+    ("Records must follow [qsreg:820.30(j)].", "superseded_citation"),
+])
+def test_claim_check_flags(text, kind):
+    assert kind in {f.kind for f in check_output(text)}
+
+
+@pytest.mark.parametrize("text", [
+    "A new 510(k) is required under 21 CFR 807.81(a)(3) when a change could significantly affect safety or effectiveness.",
+    "Design verification is required by ISO 13485 §7.3.6 (QMSR §820.10).",
+    "Under the former QS regulation, 21 CFR 820.30(f) covered design verification.",
+    "FDA recommends documenting the decision [510k-change:documentation].",
+    "Our team must first review CAPA-018 and then re-run VP-001.",
+])
+def test_claim_check_passes_supported_or_non_regulatory_text(text):
+    assert check_output(text) == []
+
+
+def test_default_device_class_comes_from_verified_definition():
+    assert load_device_definition()["product_code"] == "MMI"
+    assert DEFAULT_DEVICE_CLASS == load_device_definition()["device_class"] == "Class II"
+
+
+def test_verify_device_definition_match_mismatch_error():
+    pinned = {"product_code": "MMI", "regulation_number": "862.1215", "device_class": "Class II"}
+    same = lambda code: {"product_code": code, "regulation_number": "862.1215", "device_class": "Class II", "device_name": "x"}
+    other = lambda code: {"product_code": code, "regulation_number": "862.1215", "device_class": "Class III", "device_name": "x"}
+    def down(code):
+        raise OSError("offline")
+    assert verify_device_definition(pinned, same)["status"] == "match"
+    mismatch = verify_device_definition(pinned, other)
+    assert mismatch["status"] == "mismatch" and "device_class" in mismatch["differences"][0]
+    assert verify_device_definition(pinned, down)["status"] == "error"
+
+
+def test_update_check_reports_device_definition(snapshot_copy):
+    check = check_regulatory_updates(snapshot_copy, {}, device_verifier=lambda: {"status": "mismatch", "differences": ["x"]})
+    assert check.device_definition["status"] == "mismatch"
+
+
+def test_every_standard_cited_by_seed_data_is_in_the_registry(g):
+    # Guards against the seed citing a standard the library does not know (EP07 was missed once).
+    designations = " ".join(s["designation"] for s in load_standards())
+    cited = set()
+    for n in g.all_nodes():
+        text = f"{n['title']} {n.get('description', '')}"
+        cited |= set(re.findall(r"CLSI (EP\d+)", text)) | set(re.findall(r"ISO (\d{4,5})", text))
+    assert cited, "seed data should cite standards"
+    for ref in cited:
+        assert ref in designations, ref

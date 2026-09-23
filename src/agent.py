@@ -43,9 +43,8 @@ from graph import (
     NodeType,
     RTMGraph,
 )
-from regulations import load_regulations, build_prompt_context
+from regulations import CORE_QMSR, GROUNDING_INSTRUCTION, load_regulations, build_prompt_context
 
-_regulations = load_regulations()
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +76,9 @@ class ImpactReport:
     sme_notifications: list = field(default_factory=list)
     team_briefings: dict = field(default_factory=dict)
     # Reviewer-attested change type; drives the deterministic risk downgrade.
-    change_type: str = "Functional change"
+    change_type: str = "Substantive change"
+    # Device classification; selects premarket-pathway grounding only.
+    device_class: str = "Class II"
     # Risk assessment — populated by the supervisor after this agent completes
     risk_level: str = "low"          # "low" | "high" | "critical"
     risk_rationale: str = ""
@@ -135,7 +136,7 @@ def build_impact_agent(graph: RTMGraph) -> Any:
         Downstream: full BFS via RTMGraph.downstream_nodes().
         Upstream: one level (immediate predecessors only) to surface the
         requirements this node is supposed to satisfy — bidirectional
-        traceability per QMSR §820.30(b). Each item is tagged with
+        traceability per ISO 13485 §7.3.2 (QMSR §820.10). Each item is tagged with
         direction="downstream" or direction="upstream".
         """
         changed_id = state["changed_node_id"]
@@ -176,7 +177,7 @@ def build_impact_agent(graph: RTMGraph) -> Any:
         # Upstream = all ancestors at a strictly lower hierarchy level than the
         # changed node. Uses full BFS (not just direct predecessors) so multi-hop
         # ancestors like Design Inputs feeding into a V&V Protocol via a Design
-        # Output are surfaced for bidirectional traceability per QMSR §820.30(b).
+        # Output are surfaced for bidirectional traceability per ISO 13485 §7.3.2 (QMSR §820.10).
         upstream_ids = [
             nid for nid in graph.upstream_nodes(changed_id)
             if HIERARCHY_LEVEL.get(graph.get_node(nid).get("node_type", ""), 0) < changed_level
@@ -228,7 +229,7 @@ def build_impact_agent(graph: RTMGraph) -> Any:
             if item.get("direction") == "upstream":
                 action = (
                     "Verify that the revised node still satisfies this upstream requirement. "
-                    "Check bidirectional traceability per QMSR §820.30(b)."
+                    "Check bidirectional traceability per ISO 13485 §7.3.2 (QMSR §820.10)."
                 )
                 scored.append({**item, "required_action": action})
                 continue
@@ -251,27 +252,27 @@ def build_impact_agent(graph: RTMGraph) -> Any:
                 if has_vv_data:
                     action = (
                         "Re-execute V&V protocol — change to upstream design output may invalidate "
-                        "the verification or validation basis per QMSR §820.30(f)/(g)."
+                        "the verification or validation basis per ISO 13485 §7.3.6/§7.3.7 (QMSR §820.10)."
                     )
                     vv_invalidations.append(item["node_id"])
                 else:
                     action = (
                         "No existing verification basis to invalidate — this V&V protocol has not "
                         "been executed. Author and execute it against the updated specification "
-                        "per QMSR §820.30(f)/(g)."
+                        "per ISO 13485 §7.3.6/§7.3.7 (QMSR §820.10)."
                     )
             elif node_type == NodeType.TEST_RESULT:
                 if has_vv_data:
                     action = (
                         "Invalidate test result — upstream V&V protocol or design output has changed. "
                         "Existing data was generated against a superseded specification and cannot be "
-                        "relied upon until the protocol is re-executed per QMSR §820.30(f)/(g)."
+                        "relied upon until the protocol is re-executed per ISO 13485 §7.3.6/§7.3.7 (QMSR §820.10)."
                     )
                     vv_invalidations.append(item["node_id"])
                 else:
                     action = (
                         "No existing test data to invalidate — this test result has not been "
-                        "generated. Produce it against the updated protocol per QMSR §820.30(f)/(g)."
+                        "generated. Produce it against the updated protocol per ISO 13485 §7.3.6/§7.3.7 (QMSR §820.10)."
                     )
             elif node_type == NodeType.HAZARD:
                 action = (
@@ -286,18 +287,18 @@ def build_impact_agent(graph: RTMGraph) -> Any:
                 )
             elif node_type == NodeType.CAPA:
                 action = (
-                    "Review CAPA scope per QMSR §820.100 — root cause evidence chain has been "
+                    "Review CAPA scope per ISO 13485 §8.5.2 (QMSR §820.10) — root cause evidence chain has been "
                     "modified by an upstream design change. Update corrective action plan if warranted."
                 )
                 capa_triggers.append(item["node_id"])
             elif node_type == NodeType.DESIGN_OUTPUT:
                 action = (
-                    "Review design output specification per QMSR §820.30(d) — upstream design "
+                    "Review design output specification per ISO 13485 §7.3.4 (QMSR §820.10) — upstream design "
                     "input dependency has changed."
                 )
             elif node_type == NodeType.DESIGN_INPUT:
                 action = (
-                    "Review design input specification per QMSR §820.30(c) for consistency "
+                    "Review design input specification per ISO 13485 §7.3.3 (QMSR §820.10) for consistency "
                     "with the changed upstream requirement."
                 )
             else:
@@ -340,17 +341,16 @@ def build_impact_agent(graph: RTMGraph) -> Any:
         ]
         impact_text = "\n".join(impact_lines) if impact_lines else "No downstream impacts detected."
 
-        reg_context = build_prompt_context(_regulations, ["820.30", "820.100", "493.1253", "493.1255"])
+        reg_context = build_prompt_context(
+            load_regulations(), CORE_QMSR + ["qmsr-preamble:risk-management", "493.1253", "493.1255"]
+        )
         system_prompt = (
             "You are a regulatory affairs assistant helping a QA team understand the downstream "
             "compliance impact of a change to an IVD assay Requirements Traceability Matrix (RTM). "
             "ISO 13485:2016, ISO 14971:2019, and CLSI analytical performance standards "
             "(EP17-A2, EP05-A3) also apply.\n\n"
             f"{reg_context}\n\n"
-            "Ground every regulatory statement in the verbatim eCFR text supplied above — cite the "
-            "exact section provided and do not rely on your own recollection of the regulations or "
-            "paraphrase, summarize, or invent regulatory language. If a point is not supported by "
-            "the supplied text, say so rather than asserting it. "
+            f"{GROUNDING_INSTRUCTION} "
             "Your role is to summarize the impact for a human reviewer who must decide whether "
             "to approve compliance status updates. Be specific and factual. "
             "Do not make compliance decisions — only surface what needs human review."

@@ -1,0 +1,11 @@
+{
+  "_note": "Verified device definition (PRD §6.1). Applicability decisions depend on it. The update check re-verifies it against the FDA Product Classification database; Regulatory Affairs approval is recorded in approved_by.",
+  "product_code": "MMI",
+  "device_name": "Immunoassay Method, Troponin Subunit",
+  "regulation_number": "862.1215",
+  "device_class": "Class II",
+  "pathway": "510(k)",
+  "verified_against": "https://api.fda.gov/device/classification.json?search=product_code:MMI",
+  "verified_on": "2026-09-23",
+  "approved_by": null
+}

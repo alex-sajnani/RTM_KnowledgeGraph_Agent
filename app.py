@@ -20,7 +20,9 @@ import json
 import io
 import csv
 import html
+import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Load .env if present
@@ -43,12 +45,23 @@ if "OPENAI_API_KEY" not in os.environ:
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from graph import RTMGraph, NodeType, NodeStatus, EdgeType, HIERARCHY_LEVEL, build_seed_graph
-from supervisor import build_supervisor, run_full_analysis, CHANGE_TYPES
+from supervisor import (
+    build_supervisor, run_full_analysis, CHANGE_TYPES, DEFAULT_DEVICE_CLASS, DEVICE_CLASSES,
+)
 from langgraph.checkpoint.memory import MemorySaver
 from agent import ImpactReport
 from extractor import RTMDocumentExtractor, SAMPLE_DOCUMENTS
 from sme_agent import SME_NOTIFICATION_MAP
-from regulations import load_regulations
+from regulations import (
+    CORE_QMSR, GROUNDING_INSTRUCTION, INSPECTION_GROUNDING, ISO_13485_READ_ONLY_URL,
+    build_prompt_context, grounding_status, load_device_definition, load_regulations, load_standards,
+    pathway_context, section_label,
+)
+from regulatory_refresh import apply_regulatory_updates, check_regulatory_updates
+from claim_check import check_output
+from inspection import (
+    AREA_PURPOSE, AREAS, assess_inspection_readiness, element_references, superseded_references,
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -185,6 +198,26 @@ def navigate_to(page: str, prefill: str = "") -> None:
         st.session_state.prefill_change = prefill
 
 
+def _render_claim_check(text: str) -> None:
+    """
+    Show the deterministic claim/citation/copyright check for one AI output
+    (PRD FR-012, FR-013). Findings are displayed, never silently dropped.
+    """
+    if not text:
+        return
+    findings = check_output(text)
+    if not findings:
+        st.caption(":green[:material/verified:] Claim check: no unsupported regulatory claims, "
+                   "superseded citations, or standards text found.")
+        return
+    errors = sum(f.severity == "error" for f in findings)
+    lines = "\n".join(f"- **{f.kind.replace('_', ' ')}**: {f.message}  \n  _{f.excerpt}_" for f in findings)
+    (st.error if errors else st.warning)(
+        f"**Claim check: {len(findings)} issue(s) for human review**\n\n{lines}",
+        icon=":material/rule:",
+    )
+
+
 def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports: list) -> str:
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -275,7 +308,7 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
     system_prompt = (
         "You are an expert regulatory affairs analyst for a medical device company. "
         "You have full access to the Requirements Traceability Matrix (RTM) for an "
-        "hs-cTnI immunoassay (submission P240052) including all nodes, edges, audit history, "
+        "hs-cTnI immunoassay (product code MMI, 21 CFR 862.1215, Class II, 510(k)) including all nodes, edges, audit history, "
         "recent change impact analyses, and a V&V closure analysis. "
         "Answer questions about specific nodes, their upstream/downstream dependencies, "
         "status history, compliance flags, and relationships. "
@@ -288,8 +321,8 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
         "Test Result in UN-001's chain says nothing about UN-002's validation. Do "
         "NOT pull a Test Result from another chain to explain a node's status. "
         "A design-control chain is only 'closed' when a completed Test Result "
-        "verifies its Design Input (QMSR §820.30(f)) and validates its User Need "
-        "(QMSR §820.30(g)). The V&V CLOSURE GAPS section below is a GLOBAL list of "
+        "verifies its Design Input (ISO 13485 §7.3.6 (QMSR §820.10)) and validates its User Need "
+        "(ISO 13485 §7.3.7 (QMSR §820.10)). The V&V CLOSURE GAPS section below is a GLOBAL list of "
         "open loops across ALL chains — use it only for graph-wide questions, never "
         "to infer a specific node's status (defer to that node's V&V STATUS line). "
         "CONNECTED CHAIN COMPLETENESS: when a question asks about a node or its "
@@ -312,7 +345,8 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
         "report it and note its approval state. Do not omit a relevant impact "
         "analysis just because the question used the word 'status'. "
         "Cite node IDs and edge types directly. "
-        "Use regulatory terminology (QMSR §820.30, ISO 14971, 21 CFR Part 814) where relevant.\n\n"
+        "Use regulatory terminology (QMSR 21 CFR 820, ISO 13485 clause numbers, ISO 14971) where relevant. "
+        f"{GROUNDING_INSTRUCTION}\n\n"
         "OUTPUT FORMAT — keep it tight: aim for under 120 words. No opening "
         "preamble ('The status for ... is as follows') and no closing summary "
         "sentence ('Therefore, the chain remains...'). Lead with a one-line verdict "
@@ -330,6 +364,15 @@ def _query_graph(question: str, graph: RTMGraph, audit_log: list, impact_reports
         "Do not fabricate node IDs (e.g. do not guess that a 'DI-002' or 'TR-005' exists "
         "unless it is listed). If the answer requires a node that is not in the list, state "
         "plainly that no such node exists in the current graph rather than making one up."
+    )
+    device_class = load_device_definition().get("device_class") or DEFAULT_DEVICE_CLASS
+    system_prompt += (
+        "\n\n" + build_prompt_context(
+            st.session_state.regulations,
+            CORE_QMSR + INSPECTION_GROUNDING
+            + ["fda-qmsr-faq:pre-qmsr-records", "fda-qmsr-faq:iso-access"],
+        )
+        + "\n\n" + pathway_context(st.session_state.regulations, device_class)
     )
     user_prompt = (
         f"RTM NODES:\n{node_text}\n\n"
@@ -469,7 +512,7 @@ NODE_TYPE_LEVEL = {
 
 with st.sidebar:
     st.markdown("### :material/biotech: RTM Agent")
-    st.caption("hs-cTnI Immunoassay · P240052")
+    st.caption("hs-cTnI Immunoassay · MMI · Class II · 510(k)")
 
     st.space("small")
 
@@ -543,6 +586,7 @@ if st.session_state.current_page == "dashboard":
         with st.container(border=True):
             st.caption(f"**Q:** {qr['question']}")
             st.write(qr["answer"])
+            _render_claim_check(qr["answer"])
             col_clear, col_impact = st.columns([1, 5])
             with col_clear:
                 if st.button("Clear", key="clear_query", icon=":material/close:"):
@@ -792,11 +836,27 @@ elif st.session_state.current_page == "change_impact":
         change_type = st.selectbox(
             "Change type",
             CHANGE_TYPES,
-            help="The reviewer's attestation of what kind of change this is. "
-                 "Documentation-only and No-change downgrade the risk to LOW even when "
-                 "verification evidence is topologically downstream — an auditable, "
-                 "reproducible decision the model never overrides.",
+            help="The reviewer's attestation of whether this change is substantive. "
+                 "Documentation only downgrades the risk to LOW even when verification "
+                 "evidence is topologically downstream — an auditable, reproducible "
+                 "decision the model never overrides.",
         )
+        # Device class is a property of the device, not the change: it comes from
+        # the verified device definition (data/device_definition.json).
+        _device = load_device_definition()
+        device_class = _device.get("device_class") or DEFAULT_DEVICE_CLASS
+        st.caption(
+            f":material/verified: Device: {_device.get('product_code', '—')} · "
+            f"21 CFR {_device.get('regulation_number', '—')} · {device_class} · "
+            f"{_device.get('pathway', '—')} (verified device definition)"
+        )
+        if device_class not in DEVICE_CLASSES:
+            st.warning(
+                f"The regulatory library supports the Class II 510(k) pathway only; this device "
+                f"definition is {device_class}. Submission conclusions will be flagged for "
+                "Regulatory Affairs review.",
+                icon=":material/warning:",
+            )
 
     with col_right:
         prefill = st.session_state.pop("prefill_change", "") if "prefill_change" in st.session_state else ""
@@ -823,6 +883,7 @@ elif st.session_state.current_page == "change_impact":
                 checkpointer=st.session_state.checkpointer,
                 supervisor=st.session_state.supervisor,
                 change_type=change_type,
+                device_class=device_class,
             )
         if interrupt_payload:
             st.session_state.pending_escalation = interrupt_payload
@@ -842,6 +903,7 @@ elif st.session_state.current_page == "change_impact":
             f"{esc.get('risk_rationale', '')}",
             icon=":material/warning:",
         )
+        _render_claim_check(esc.get("risk_rationale", ""))
 
         if esc.get("immediate_concerns"):
             st.markdown("**Immediate concerns:**")
@@ -950,13 +1012,17 @@ elif st.session_state.current_page == "change_impact":
         with col_risk:
             st.badge(f"Risk: {risk_label}", color=risk_color)
         with col_meta:
-            st.caption(f"Change type attested as **{report.change_type}**")
+            st.caption(
+                f"Change type attested as **{report.change_type}** · "
+                f"Device class **{report.device_class}**"
+            )
             if report.escalation_required and report.escalation_reviewer:
                 st.caption(f"Escalation reviewed by **{report.escalation_reviewer}**")
 
         # Compliance LLM summary
         if report.llm_summary:
             st.info(f"**Compliance Summary**\n\n{report.llm_summary}")
+            _render_claim_check(report.llm_summary)
 
         # V&V / CAPA flags
         flag_cols = st.columns(2)
@@ -991,7 +1057,7 @@ elif st.session_state.current_page == "change_impact":
 
         if upstream_nodes_list:
             st.subheader(f"Upstream requirements ({len(upstream_nodes_list)} nodes)")
-            st.caption("Verify that the changed node still satisfies these parent requirements per QMSR §820.30(b).")
+            st.caption("Verify that the changed node still satisfies these parent requirements per ISO 13485 §7.3.2 (QMSR §820.10).")
             up_rows = []
             for n in upstream_nodes_list:
                 up_rows.append({
@@ -1076,10 +1142,11 @@ elif st.session_state.current_page == "change_impact":
                 icon = team_icons.get(team, ":material/group:")
                 with st.expander(f"{team} briefing", icon=icon):
                     st.write(briefing)
+                    _render_claim_check(briefing)
 
         # Human approval gate
         st.subheader("Human approval gate")
-        st.caption("Per 21 CFR Part 11 and QMSR §820.40, compliance status cannot be updated without documented human approval.")
+        st.caption("Per 21 CFR Part 11 and ISO 13485 §4.2.4 (QMSR §820.10), compliance status cannot be updated without documented human approval.")
 
         if report.approved:
             st.success("Report approved and stored. Downstream V&V/Test Result obligations and upstream traceability requirements marked PENDING_REVIEW.", icon=":material/check_circle:")
@@ -1096,7 +1163,7 @@ elif st.session_state.current_page == "change_impact":
                 #   - downstream V&V Protocol / Test Result obligations (data generated
                 #     against a now-superseded spec), and
                 #   - ALL upstream requirements, which must be re-verified for
-                #     bidirectional traceability per QMSR §820.30(b) before they can be
+                #     bidirectional traceability per ISO 13485 §7.3.2 (QMSR §820.10) before they can be
                 #     considered current again. Leaving them 'active' would mislead the
                 #     dashboard into showing them as still-verified.
                 if (
@@ -1104,8 +1171,8 @@ elif st.session_state.current_page == "change_impact":
                     or is_upstream
                 ):
                     reason = (
-                        f"Bidirectional traceability re-verification required per QMSR "
-                        f"§820.30(b) after change to {report.changed_node_id}; "
+                        f"Bidirectional traceability re-verification required per ISO 13485 "
+                        f"§7.3.2 (QMSR §820.10) after change to {report.changed_node_id}; "
                         f"approved by {approver}"
                         if is_upstream
                         else f"Change impact analysis approved by {approver}"
@@ -1145,7 +1212,7 @@ elif st.session_state.current_page == "graph_explorer":
     import networkx as nx
 
     st.header("RTM Dependency Graph")
-    st.caption("Interactive dependency network for the hs-cTnI immunoassay device (submission P240052). Drag nodes, zoom, and hover for details.")
+    st.caption("Interactive dependency network for the hs-cTnI immunoassay (product code MMI, Class II). Drag nodes, zoom, and hover for details.")
 
     import json
 
@@ -2192,7 +2259,148 @@ elif st.session_state.current_page == "doc_extract":
 
 elif st.session_state.current_page == "audit":
     st.header("Audit")
-    st.caption("RTM completeness per QMSR §820.30 and immutable event log per §820.180.")
+    st.caption("RTM completeness per ISO 13485 §7.3 (QMSR §820.10) and immutable event log per ISO 13485 §4.2.5 / QMSR §820.35.")
+
+    grounding = grounding_status()
+    if grounding["using_fallback"]:
+        st.warning(
+            "Regulatory snapshot not found — LLM prompts are using minimal stub text. "
+            "Run `python scripts/refresh_regulatory_snapshot.py` to rebuild it.",
+            icon=":material/warning:",
+        )
+    else:
+        with st.container(border=True):
+            info_col, btn_col = st.columns([3, 1], vertical_alignment="center")
+            with info_col:
+                st.markdown(
+                    f"**Regulatory grounding** · {grounding['section_count']} pinned sections "
+                    f"(snapshot {grounding['generated_at'][:10]})"
+                )
+                last = grounding["last_update"]
+                if last:
+                    st.caption(
+                        f"Last update applied {last['applied_at'][:10]} by **{last['reviewer']}** "
+                        f"({len(last['sections'])} section(s), {len(last['sources'])} source(s))."
+                    )
+                else:
+                    st.caption(
+                        "Every LLM prompt is grounded in this verbatim, version-pinned text from eCFR, "
+                        "the Federal Register, and FDA. ISO 13485 is cited by clause number."
+                    )
+            with btn_col:
+                check_clicked = st.button(
+                    "Check for regulatory updates", icon=":material/sync:", width="stretch",
+                    help="Fetches eCFR, FDA's QMSR page and FAQ, Compliance Program 7382.850, and the "
+                         "510(k) change guidance, and compares them to the pinned snapshot. "
+                         "Nothing changes until a named reviewer applies the update.",
+                )
+
+            if check_clicked:
+                with st.spinner("Fetching eCFR and FDA sources..."):
+                    try:
+                        st.session_state.reg_check = check_regulatory_updates()
+                    except Exception as exc:  # snapshot unreadable
+                        st.session_state.reg_check = None
+                        st.error(f"Update check failed — the pinned snapshot is unchanged. {exc}")
+
+            check = st.session_state.get("reg_check")
+            if check is not None:
+                dd = check.device_definition
+                if dd.get("status") == "match":
+                    st.caption(
+                        f":green[:material/verified:] Device definition matches FDA's classification "
+                        f"record: {dd['live']['product_code']} · 21 CFR {dd['live']['regulation_number']} · "
+                        f"{dd['live']['device_class']}."
+                    )
+                elif dd.get("status") == "mismatch":
+                    st.error(
+                        "**Device definition differs from FDA's classification record** — Regulatory "
+                        "Affairs review required: " + "; ".join(dd["differences"]),
+                        icon=":material/report:",
+                    )
+                elif dd.get("status") == "error":
+                    st.warning(f"Device definition could not be verified: {dd.get('error')}")
+                for source_name, error in check.errors.items():
+                    st.error(
+                        f"**{source_name}** could not be checked — its pinned text is unchanged. {error}",
+                        icon=":material/cloud_off:",
+                    )
+                if check.up_to_date:
+                    if check.checked:
+                        st.success(
+                            f"Up to date — {', '.join(check.checked)} match the pinned snapshot.",
+                            icon=":material/check_circle:",
+                        )
+                else:
+                    if check.changes:
+                        st.warning(
+                            f"{len(check.changes)} pinned section(s) changed at the source. Review the "
+                            "changes before applying — they will be used in every LLM prompt.",
+                            icon=":material/difference:",
+                        )
+                        for change in check.changes:
+                            st.markdown(f"**{change.label}** · {change.status}")
+                            if change.diff:
+                                st.code(change.diff, language="diff")
+                    if check.source_changes:
+                        st.info(
+                            "These sources changed since the snapshot, though the pinned excerpts "
+                            "above are all that feed prompts. Open them to look for new content that "
+                            "should be pinned:",
+                            icon=":material/update:",
+                        )
+                        for sc in check.source_changes:
+                            version = (
+                                f"{sc.pinned_version or '—'} → {sc.live_version or '—'}"
+                                if sc.pinned_version != sc.live_version else sc.live_version
+                            )
+                            st.markdown(f"- [{sc.title}]({sc.url}) · {version}")
+                    reviewer = st.text_input(
+                        "Reviewer name", key="reg_reviewer",
+                        placeholder="Required to apply the update",
+                    )
+                    if st.button(
+                        "Apply update", type="primary", icon=":material/gavel:",
+                        disabled=not reviewer.strip(),
+                    ):
+                        applied = apply_regulatory_updates(check, reviewer)
+                        st.session_state.regulations = load_regulations()
+                        st.session_state.audit_log.append({
+                            "event": "regulatory_snapshot_updated",
+                            "sections": ", ".join(applied) or "none",
+                            "sources": ", ".join(sc.source_id for sc in check.source_changes) or "none",
+                            "reviewer": reviewer.strip(),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+                        st.session_state.reg_check = None
+                        st.toast("Regulatory snapshot updated.", icon=":material/check:")
+                        st.rerun()
+
+            with st.expander("Grounding sources", icon=":material/gavel:"):
+                st.caption("Pinned public-domain text (content class P). Authority levels per the PRD "
+                           "source hierarchy: A1 regulation · A4 FDA interpretation · A5 guidance · "
+                           "A6 compliance program / FAQ.")
+                st.dataframe(
+                    [
+                        {"Source": s["title"], "Authority": s.get("authority_level", ""),
+                         "Status": s.get("status", ""), "Version": s["version_date"], "URL": s["url"]}
+                        for s in grounding["sources"].values()
+                    ],
+                    column_config={"URL": st.column_config.LinkColumn("URL")},
+                    hide_index=True,
+                )
+                st.caption("Referenced standards — metadata only (content class L). Their text is "
+                           "copyrighted and is never stored, shown, or sent to the AI.")
+                st.dataframe(
+                    [
+                        {"Standard": s["designation"], "Authority": s["authority_level"],
+                         "FDA recognition": s.get("fda_recognition_number") or "— (incorporated by reference)",
+                         "Basis": s["authority_basis"],
+                         "License on file": "Yes" if s.get("license_record_id") else "No"}
+                        for s in load_standards()
+                    ],
+                    hide_index=True,
+                )
 
     st.subheader("Readiness assessment")
 
@@ -2201,6 +2409,11 @@ elif st.session_state.current_page == "audit":
     orphans = g.orphaned_nodes()
     missing_vv = g.missing_vv_links()
     open_loops = g.chain_verification_gaps()
+    open_capas = [
+        n for n in g.all_nodes()
+        if n["node_type"] == NodeType.CAPA.value
+        and n["status"] not in {NodeStatus.ACTIVE.value, NodeStatus.APPROVED.value}
+    ]
 
     # Score card
     score_col, detail_col = st.columns([1, 2])
@@ -2233,8 +2446,9 @@ elif st.session_state.current_page == "audit":
             help="Average per-node readiness: active/approved = 100%, pending review/not started = 50%, invalidated = 0%.",
         )
 
-    if score >= 90:
-        st.success("RTM is audit-ready. All nodes have traceability links and V&V coverage.", icon=":material/check_circle:")
+    truly_ready = score >= 90 and not open_loops and not missing_vv and not orphans and not open_capas
+    if truly_ready:
+        st.success("RTM is audit-ready. All nodes have traceability links, V&V coverage, and no open CAPAs.", icon=":material/check_circle:")
     else:
         if orphans:
             st.error(f"**Orphaned Nodes ({len(orphans)})** — No traceability links:")
@@ -2262,6 +2476,117 @@ elif st.session_state.current_page == "audit":
             st.warning(f"**Open Verification/Validation Loops ({len(open_loops)})** — links exist but no completed Test Result closes them:")
             for gap in open_loops:
                 st.write(f"- `{gap['id']}` [{gap['node_type']}] {gap['title']} — {gap['issue']}")
+
+        if open_capas:
+            st.warning(f"**Open CAPAs ({len(open_capas)})** — not yet active or approved:")
+            for n in open_capas:
+                st.write(f"- `{n['id']}` {n['title']} — status: {n['status']}")
+
+    # ── FDA inspection readiness (CP 7382.850) ────────────────────────────────
+    def _md_escape(text: str) -> str:
+        # Regulatory text contains markdown-significant characters ("minimum*", "$").
+        # Federal Register footnote markers (e.g. "\\1\\") are hidden for display only;
+        # the pinned snapshot keeps the verbatim text.
+        text = re.sub(r"\\\d+\\", "", text)
+        return re.sub(r"([\\`*_$~|<>#])", r"\\\1", text)
+
+    def _format_regulation(text: str) -> str:
+        # One paragraph per regulatory marker — (a), (1), (i) — instead of a wall of text.
+        return "\n\n".join(_md_escape(p) for p in re.split(r"\s+(?=\([a-z0-9]{1,4}\)\s)", text))
+
+    @st.dialog("QMSR regulatory text", width="large")
+    def _show_regulatory_text(a) -> None:
+        regs = st.session_state.regulations
+        ecfr_version = grounding_status()["sources"].get("ecfr:21-820", {}).get("version_date", "")
+        st.markdown(f"**{a.element}** · {a.requirements}")
+        st.caption(f"{a.area} QMS Area · FDA Compliance Program 7382.850")
+        former = superseded_references(a)
+        tab_names = ["This requirement"] + (["Former QS regulation (superseded)"] if former else [])
+        tabs = st.tabs(tab_names)
+        tab_req = tabs[0]
+        with tab_req:
+            st.info(
+                "The clause text itself (e.g. " + a.requirements + ") is ISO 13485:2016, which the "
+                "QMSR incorporates by reference under 21 CFR 820.7. It is copyrighted, so it is not "
+                "reproduced here. Per FDA's QMSR FAQ (Q12), it can be read free, read-only, at the "
+                "ANSI Incorporated by Reference Portal.",
+                icon=":material/menu_book:",
+            )
+            st.link_button("Read ISO 13485:2016 (ANSI IBR Portal)", ISO_13485_READ_ONLY_URL,
+                           icon=":material/open_in_new:")
+            for sid in element_references(a):
+                if sid in regs:
+                    st.markdown(f"**{section_label(sid)}**")
+                    st.markdown(_format_regulation(regs[sid]))
+            st.link_button(
+                f"Open 21 CFR Part 820 on eCFR (version {ecfr_version})",
+                "https://www.ecfr.gov/current/title-21/part-820",
+                icon=":material/open_in_new:",
+            )
+        if former:
+            with tabs[1]:
+                st.warning(
+                    "**Superseded on 2026-02-02 — not the current requirement.** This is the former "
+                    "QS regulation, shown for comparison and for mapping records created before the "
+                    "QMSR (FDA QMSR FAQ Q7). FDA judged the two frameworks substantially similar in "
+                    "totality, not clause-for-clause identical; the binding requirement is the ISO "
+                    "13485 clause above, applied through 21 CFR 820.10.",
+                    icon=":material/history:",
+                )
+                if "qmsr-preamble:overview" in regs:
+                    st.caption("FDA, QMSR final rule (89 FR 7496):")
+                    st.markdown(f"> {_md_escape(regs['qmsr-preamble:overview'])}")
+                for sid in former:
+                    if sid in regs:
+                        st.markdown(f"**{section_label(sid)}**")
+                        st.markdown(_format_regulation(regs[sid]))
+                st.link_button(
+                    "Open Part 820 as of 2026-02-01 on eCFR",
+                    "https://www.ecfr.gov/on/2026-02-01/title-21/part-820",
+                    icon=":material/open_in_new:",
+                )
+
+    st.subheader("FDA inspection readiness")
+    st.caption(
+        "Organized by the QMS Areas and elements FDA evaluates under Compliance Program 7382.850, "
+        "which replaced QSIT on 2026-02-02. Inspection Model 2 evaluates Product and Process Changes "
+        "and the design and development elements at minimum."
+    )
+    current = st.session_state.get("current_impact_report")
+    pending_reports = [current] if current is not None and not current.approved else []
+    assessments = assess_inspection_readiness(g, pending_reports)
+    for area in AREAS:
+        rows = [a for a in assessments if a.area == area]
+        assessed = [a for a in rows if a.status != "not_assessed"]
+        gaps = [a for a in assessed if a.status == "gap"]
+        with st.container(border=True):
+            title_col, badge_col = st.columns([4, 1], vertical_alignment="center")
+            title_col.markdown(f"**{area}**")
+            with badge_col:
+                if gaps:
+                    st.badge(f"{len(gaps)} of {len(assessed)} with gaps", color="orange")
+                else:
+                    st.badge("Ready", icon=":material/check:", color="green")
+            st.caption(AREA_PURPOSE[area])
+            for a in assessed:
+                icon = ":orange[:material/error:]" if a.status == "gap" else ":green[:material/check_circle:]"
+                label_col, text_col = st.columns([4, 1], vertical_alignment="center")
+                label_col.markdown(f"{icon} **{a.element}** · {a.requirements}")
+                if text_col.button(
+                    "Regulatory text", key=f"regtext_{a.area}_{a.element}",
+                    icon=":material/menu_book:", type="tertiary",
+                    help="View the QMSR text, FDA's inspection table, and where to read the ISO 13485 clause",
+                ):
+                    _show_regulatory_text(a)
+                if a.findings:
+                    st.markdown("\n".join(f"- {f}" for f in a.findings))
+                else:
+                    st.caption(a.basis)
+            not_assessed = [a.element for a in rows if a.status == "not_assessed"]
+            if not_assessed:
+                st.caption(
+                    "Not represented in the RTM (evaluate outside this tool): " + ", ".join(not_assessed)
+                )
 
     # ── RTM Export ────────────────────────────────────────────────────────────
     st.subheader("Export RTM")
@@ -2301,7 +2626,7 @@ elif st.session_state.current_page == "audit":
 
     # ── Event log ─────────────────────────────────────────────────────────────
     st.subheader("Event log")
-    st.caption("Immutable log of all agent actions, approvals, and graph mutations. Per QMSR §820.180.")
+    st.caption("Immutable log of all agent actions, approvals, and graph mutations. Per ISO 13485 §4.2.5 / QMSR §820.35.")
 
     graph_log = g.audit_log()
     all_events = list(reversed(st.session_state.audit_log)) + list(reversed(graph_log))

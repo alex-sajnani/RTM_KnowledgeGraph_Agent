@@ -9,6 +9,8 @@ build/
 venv/
 *.tmp
 .pytest_cache/
-regulations_cache.json
 .claude/
 writing style/
+~$*
+regulations_cache.json
+data/index/

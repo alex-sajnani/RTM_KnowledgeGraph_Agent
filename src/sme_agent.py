@@ -14,7 +14,8 @@ Teams:
   - Bioinformatics: performance re-analysis framing (CLSI, statistical)
   - R&D: study design and re-validation framing (CLSI protocols, timelines)
   - Pathology: clinical risk and patient safety framing (ISO 14971, lab director)
-  - Quality/RA: regulatory submission framing (QMSR §820.30(i))
+  - Quality/RA: design change controls (ISO 13485 §7.3.9 via QMSR §820.10) and the
+    premarket submission pathway for the selected device class
 
 Architecture: LangGraph state machine with map-reduce pattern:
   map_teams → [Send × N teams] → brief_team (×N parallel) → finalize_notifications
@@ -37,9 +38,16 @@ from langgraph.types import Send
 from typing_extensions import TypedDict
 
 from graph import NodeType
-from regulations import load_regulations, build_prompt_context
+from regulations import (
+    DEFAULT_DEVICE_CLASS,
+    GROUNDING_INSTRUCTION,
+    PATHWAY_GROUNDING,
+    TEAM_GROUNDING,
+    build_prompt_context,
+    load_regulations,
+    pathway_context,
+)
 
-_regulations = load_regulations()
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +74,7 @@ SME_NOTIFICATION_MAP: dict[str, list[tuple[str, str]]] = {
          "Re-analyze performance dataset against updated analytical specification; "
          "assess statistical validity of prior LoD/LoQ claims."),
         ("R&D",
-         "Initiate re-validation study under revised acceptance criteria per QMSR §820.30(g); "
+         "Initiate re-validation study under revised acceptance criteria per ISO 13485 §7.3.7 (QMSR §820.10); "
          "identify applicable CLSI protocols and timeline."),
     ],
     NodeType.TEST_RESULT.value: [
@@ -86,7 +94,7 @@ SME_NOTIFICATION_MAP: dict[str, list[tuple[str, str]]] = {
     ],
     NodeType.CAPA.value: [
         ("Quality/RA",
-         "Review CAPA scope per QMSR §820.100; update corrective action plan in light "
+         "Review CAPA scope per ISO 13485 §8.5.2 (QMSR §820.10); update corrective action plan in light "
          "of changed upstream design artifact."),
     ],
     NodeType.DESIGN_INPUT.value: [
@@ -96,7 +104,7 @@ SME_NOTIFICATION_MAP: dict[str, list[tuple[str, str]]] = {
     ],
     NodeType.DESIGN_OUTPUT.value: [
         ("R&D",
-         "Review design output specification per QMSR §820.30(d) for consistency "
+         "Review design output specification per ISO 13485 §7.3.4 (QMSR §820.10) for consistency "
          "with the changed upstream design input requirement."),
     ],
 }
@@ -110,11 +118,7 @@ TEAM_SYSTEM_PROMPTS: dict[str, str] = {
         "statistical re-evaluation of LoD/LoQ claims per CLSI EP17-A2, and what new data "
         "collection is needed before the change can be validated. Note that clinical laboratories "
         "using this device must re-verify the updated performance specifications under CLIA before "
-        "reporting patient results. Be concise and technical.\n\n"
-        + build_prompt_context(_regulations, ["493.1253"])
-        + "\n\nGround every regulatory statement in the verbatim eCFR text above — cite the exact "
-        "section supplied rather than relying on your own recollection of the regulation, and do "
-        "not paraphrase or invent regulatory language."
+        "reporting patient results. Be concise and technical."
     ),
     "R&D": (
         "You are a senior assay development scientist assessing whether new bench validation "
@@ -133,18 +137,34 @@ TEAM_SYSTEM_PROMPTS: dict[str, str] = {
     ),
     "Quality/RA": (
         "You are a regulatory affairs specialist assessing design change control obligations "
-        "following a specification change on a Class III IVD device (hs-cTnI immunoassay). "
-        "Frame your response around: QMSR §820.30(i) design change controls "
-        "and documentation requirements, Design History File (DHF) update obligations, "
-        "and the downstream CLIA obligation for customer laboratories "
-        "to re-verify performance specifications before reporting patient results. "
-        "Be precise about regulatory citations.\n\n"
-        + build_prompt_context(_regulations, ["820.30", "493.1253", "493.1255"])
-        + "\n\nGround every regulatory statement in the verbatim eCFR text above — cite the exact "
-        "section supplied rather than relying on your own recollection of the regulation, and do "
-        "not paraphrase or invent regulatory language."
+        "following a specification change on an IVD device (hs-cTnI immunoassay). "
+        "Frame your response around: design change controls under the QMSR (ISO 13485 §7.3.9 "
+        "via 21 CFR 820.10) and documentation requirements, design and development file "
+        "(former DHF, ISO 13485 §7.3.10) update obligations, the FDA Compliance Program 7382.850 "
+        "Change Control elements an investigator would evaluate for this change (e.g. Product and "
+        "Process Changes), whether the change requires a new premarket submission for this "
+        "device's classification, and the downstream CLIA "
+        "obligation for customer laboratories to re-verify performance specifications before "
+        "reporting patient results. Be precise about regulatory citations."
     ),
 }
+
+
+def team_system_prompt(team: str, device_class: str = DEFAULT_DEVICE_CLASS) -> str:
+    """
+    Assemble a team's system prompt: role framing + deterministic regulatory
+    grounding (TEAM_GROUNDING). Quality/RA also receives the premarket pathway
+    text for the device class, since it owns the submission decision.
+    """
+    prompt = TEAM_SYSTEM_PROMPTS.get(
+        team,
+        "You are a subject matter expert reviewing the impact of a design change on an IVD assay."
+    )
+    regulations = load_regulations()
+    grounding = build_prompt_context(regulations, TEAM_GROUNDING.get(team, []))
+    if team == "Quality/RA":
+        grounding += "\n\n" + pathway_context(regulations, device_class)
+    return f"{prompt}\n\n{grounding}\n\n{GROUNDING_INSTRUCTION}"
 
 
 # Quantitative-grounding guardrail — appended to every briefing user prompt.
@@ -159,6 +179,27 @@ QUANTITATIVE_GUARDRAIL = (
     "e.g. '[X] weeks', '[X] samples') to signal a value the team must still define. "
     "Only state a number if it is explicitly given in the inputs."
 )
+
+
+def quality_ra_requirements(device_class: str) -> str:
+    """
+    Extra required content for the Quality/RA briefing. Grounding text in the
+    system prompt alone is not enough — the model otherwise writes a generic
+    briefing that ignores the device class — so the asks are made explicit.
+    """
+    return (
+        "Your briefing MUST also cover, in this order:\n"
+        f"1. Premarket submission: given the device classification ({device_class}), state "
+        "whether this change likely requires a new 510(k) or can be documented without one "
+        "(21 CFR 807.81(a)(3)), citing the supplied section by its bracketed ID."
+        + ("" if device_class in PATHWAY_GROUNDING else
+           " No pathway text is supplied for this class: say so and flag it for Regulatory "
+           "Affairs review instead of stating a conclusion.")
+        + "\n"
+        "2. Inspection exposure: name the FDA Compliance Program 7382.850 Change Control element "
+        "an investigator would evaluate for this change and the ISO 13485 clauses it lists, "
+        "citing [cp7382850:change-control]."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +220,7 @@ class SMEState(TypedDict):
     change_description: str                             # the actual change being analyzed — grounds every briefing
     changed_node_id: str                                # ID of the node the user changed
     changed_node_title: str                             # title of the changed node
+    device_class: str                                   # from the verified device definition; selects pathway grounding
     sme_notifications: list[dict]                       # assembled SMENotification dicts
     team_briefings: Annotated[dict, _merge_dicts]       # team_name → LLM briefing; merged across parallel brief_team nodes
     # Send-payload fields — populated by map_to_teams, consumed by brief_team_node
@@ -237,6 +279,7 @@ def map_to_teams(state: SMEState) -> list[Send]:
         "change_description": state.get("change_description", ""),
         "changed_node_id": state.get("changed_node_id", ""),
         "changed_node_title": state.get("changed_node_title", ""),
+        "device_class": state.get("device_class", DEFAULT_DEVICE_CLASS),
     }
     return [
         Send("brief_team", {"team": team, "team_notifications": notifs, **change_context})
@@ -260,10 +303,7 @@ def brief_team_node(state: SMEState) -> dict:
     team = state["team"]
     team_notifs = state["team_notifications"]
 
-    system_prompt = TEAM_SYSTEM_PROMPTS.get(
-        team,
-        "You are a subject matter expert reviewing the impact of a design change on an IVD assay."
-    )
+    system_prompt = team_system_prompt(team, state.get("device_class", DEFAULT_DEVICE_CLASS))
 
     node_lines = [
         f"- [{n['trigger_node_type']}] {n['trigger_node_id']}: {n['trigger_node_title']}\n"
@@ -288,13 +328,16 @@ def brief_team_node(state: SMEState) -> dict:
     else:
         change_header = ""
 
+    is_quality_ra = team == "Quality/RA"
     user_prompt = (
         f"{change_header}"
         f"The following RTM nodes in your area of responsibility have been flagged "
         f"by the change impact analysis:\n\n{chr(10).join(node_lines)}\n\n"
-        f"Write a 3–4 sentence briefing describing what your team needs to do, "
-        f"in what order, and what the key risk is if action is delayed.\n\n"
-        f"{QUANTITATIVE_GUARDRAIL}"
+        f"Write a {'5–6' if is_quality_ra else '3–4'} sentence briefing describing what your "
+        f"team needs to do, in what order, and what the key risk is if action is delayed.\n\n"
+        + (quality_ra_requirements(state.get("device_class", DEFAULT_DEVICE_CLASS)) + "\n\n"
+           if is_quality_ra else "")
+        + QUANTITATIVE_GUARDRAIL
     )
 
     briefing = ""
@@ -302,7 +345,7 @@ def brief_team_node(state: SMEState) -> dict:
         llm = ChatOpenAI(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             api_key=os.getenv("OPENAI_API_KEY"),
-            max_tokens=300,
+            max_tokens=500 if is_quality_ra else 300,
         )
         response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
         briefing = response.content
