@@ -1280,11 +1280,20 @@ elif st.session_state.current_page == "graph_explorer":
                 edge_parts.append(
                     f'<span style="color:{color};font-size:10px;margin:2px;display:inline-block;">→ {et}</span>'
                 )
+            status_parts = [
+                '<span style="background:#5b8dd9;color:#fff;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">● active</span>',
+                '<span style="background:#d0d0d0;color:#333;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">● pending review</span>',
+                '<span style="background:#efefef;color:#888;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">● not started</span>',
+                '<span style="background:#fde0e0;color:#cc4444;border-radius:4px;padding:2px 6px;margin:2px;font-size:10px;display:inline-block;">● invalidated</span>',
+            ]
             st.markdown(
                 f'<div style="background:#1a1a2e;border-radius:8px;padding:10px;">'
                 f'{"".join(schema_parts)}'
                 f'<hr style="border-color:#333;margin:6px 0;">'
                 f'{"".join(edge_parts)}'
+                f'<hr style="border-color:#333;margin:6px 0;">'
+                f'<span style="color:#aaa;font-size:9px;display:block;margin-bottom:4px;">NODE FILL = STATUS</span>'
+                f'{"".join(status_parts)}'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -1621,17 +1630,40 @@ elif st.session_state.current_page == "graph_explorer":
                     size = max(15, min(55, 15 + in_deg.get(n["id"], 0) * 8))
 
                 is_required = bool(n.get("metadata", {}).get("required"))
+                status = n["status"]
                 label = f"{n['id']}\n{n['title'][:30]}" if show_details else n["id"]
                 required_suffix = " · required — to be defined" if is_required else ""
-                tooltip = f"{n['id']}: {n['title']} ({n['node_type']} · {n['status']}{required_suffix})"
+                tooltip = f"{n['id']}: {n['title']} ({n['node_type']} · {status}{required_suffix})"
 
-                # Required placeholders (open V&V loops) render as a faded, dashed-border
-                # node so they are visually distinct from committed artifacts.
+                # Node colour encodes both type (border) and status (fill):
+                #   active / approved  → full type colour, solid
+                #   pending_review     → grey fill, type-colour border (awaiting sign-off)
+                #   not_started        → near-white fill, faint border (work not yet done)
+                #   invalidated        → light red fill, red border
+                #   required           → white fill, type-colour dashed border (planned artifact)
                 if is_required:
                     node_color = {
                         "background": "#f5f5f5",
                         "border": color,
                         "highlight": {"background": "#ededed", "border": "#5b5bd6"},
+                    }
+                elif status == NodeStatus.PENDING_REVIEW.value:
+                    node_color = {
+                        "background": "#d0d0d0",
+                        "border": color,
+                        "highlight": {"background": "#c0c0c0", "border": "#5b5bd6"},
+                    }
+                elif status == NodeStatus.NOT_STARTED.value:
+                    node_color = {
+                        "background": "#efefef",
+                        "border": "#bbbbbb",
+                        "highlight": {"background": "#e0e0e0", "border": "#5b5bd6"},
+                    }
+                elif status == NodeStatus.INVALIDATED.value:
+                    node_color = {
+                        "background": "#fde0e0",
+                        "border": "#cc4444",
+                        "highlight": {"background": "#fcc", "border": "#cc4444"},
                     }
                 else:
                     node_color = {
