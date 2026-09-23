@@ -199,17 +199,20 @@ def navigate_to(page: str, prefill: str = "") -> None:
 
 
 def _render_node_review_controls(graph: RTMGraph, node_id: str, audit_log: list) -> None:
-    """Inline approve / reject controls for a single pending-review node."""
-    col_reason, col_approve, col_reject = st.columns([3, 1, 1])
-    reason_key = f"review_reason_{node_id}"
+    """Inline review controls for a single pending-review node."""
+    col_decision, col_reason, col_submit = st.columns([1, 3, 1])
+    decision = col_decision.selectbox(
+        "Decision", ["Approve", "Reject"],
+        key=f"review_decision_{node_id}", label_visibility="collapsed",
+    )
     reason = col_reason.text_input(
-        "Reason", key=reason_key, label_visibility="collapsed",
+        "Reason", key=f"review_reason_{node_id}", label_visibility="collapsed",
         placeholder=f"Review note for {node_id} (required)",
     )
-    if col_approve.button("Approve", key=f"approve_{node_id}", type="primary", use_container_width=True):
+    if col_submit.button("Submit", key=f"review_submit_{node_id}", type="primary", use_container_width=True):
         if not reason.strip():
-            st.warning(f"Enter a review note before approving `{node_id}`.")
-        else:
+            st.warning(f"Enter a review note before submitting.")
+        elif decision == "Approve":
             graph.update_node_status(node_id, NodeStatus.ACTIVE, reason=f"Approved via audit page: {reason}")
             audit_log.append({
                 "event_type": "node_approved",
@@ -218,9 +221,6 @@ def _render_node_review_controls(graph: RTMGraph, node_id: str, audit_log: list)
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             st.rerun()
-    if col_reject.button("Reject", key=f"reject_{node_id}", use_container_width=True):
-        if not reason.strip():
-            st.warning(f"Enter a review note before rejecting `{node_id}`.")
         else:
             graph.update_node_status(node_id, NodeStatus.INVALIDATED, reason=f"Rejected via audit page: {reason}")
             audit_log.append({
