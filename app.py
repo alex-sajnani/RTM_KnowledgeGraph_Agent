@@ -1685,6 +1685,15 @@ elif st.session_state.current_page == "graph_explorer":
                 })
 
             node_level_map = {n["id"]: NODE_TYPE_LEVEL.get(n["node_type"], 4) for n in all_nodes_list}
+            node_status_map = {n["id"]: n["status"] for n in all_nodes_list}
+            _closed_statuses = {NodeStatus.ACTIVE.value, NodeStatus.APPROVED.value}
+
+            def _chain_closed(node_id: str) -> bool:
+                """True if every node downstream of node_id is active or approved."""
+                return all(
+                    node_status_map.get(d, "") in _closed_statuses
+                    for d in g.downstream_nodes(node_id)
+                )
 
             # Pre-index same-level outgoing edges per source so each gets a unique curve
             from collections import defaultdict
@@ -1716,6 +1725,13 @@ elif st.session_state.current_page == "graph_explorer":
                     smooth = {"type": "curvedCCW", "roundness": 0.5}
                 else:
                     smooth = False
+                # A verifies edge is dashed until its target DI's full downstream
+                # chain is closed (every node active/approved).
+                is_verifies = e.get("edge_type") == "verifies"
+                verifies_open = is_verifies and not _chain_closed(e["target"])
+                edge_dashes = [8, 5] if verifies_open else False
+                edge_width = 3 if verifies_open else 1
+
                 vis_edges.append({
                     "id": f"{e['source']}_{e['target']}",
                     "from": e["source"],
@@ -1725,6 +1741,8 @@ elif st.session_state.current_page == "graph_explorer":
                     "arrows": "to",
                     "font": {"size": 13, "color": "#000000", "background": "white", "strokeWidth": 3, "strokeColor": "white", "align": "middle"},
                     "smooth": smooth,
+                    "dashes": edge_dashes,
+                    "width": edge_width,
                 })
 
             nodes_json = json.dumps(vis_nodes)
