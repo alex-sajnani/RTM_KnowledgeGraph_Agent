@@ -198,6 +198,40 @@ def navigate_to(page: str, prefill: str = "") -> None:
         st.session_state.prefill_change = prefill
 
 
+def _render_node_review_controls(graph: RTMGraph, node_id: str, audit_log: list) -> None:
+    """Inline approve / reject controls for a single pending-review node."""
+    col_reason, col_approve, col_reject = st.columns([3, 1, 1])
+    reason_key = f"review_reason_{node_id}"
+    reason = col_reason.text_input(
+        "Reason", key=reason_key, label_visibility="collapsed",
+        placeholder=f"Review note for {node_id} (required)",
+    )
+    if col_approve.button("Approve", key=f"approve_{node_id}", type="primary", use_container_width=True):
+        if not reason.strip():
+            st.warning(f"Enter a review note before approving `{node_id}`.")
+        else:
+            graph.update_node_status(node_id, NodeStatus.ACTIVE, reason=f"Approved via audit page: {reason}")
+            audit_log.append({
+                "event_type": "node_approved",
+                "node_id": node_id,
+                "reason": reason,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            st.rerun()
+    if col_reject.button("Reject", key=f"reject_{node_id}", use_container_width=True):
+        if not reason.strip():
+            st.warning(f"Enter a review note before rejecting `{node_id}`.")
+        else:
+            graph.update_node_status(node_id, NodeStatus.INVALIDATED, reason=f"Rejected via audit page: {reason}")
+            audit_log.append({
+                "event_type": "node_rejected",
+                "node_id": node_id,
+                "reason": reason,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            st.rerun()
+
+
 def _render_claim_check(text: str) -> None:
     """
     Show the deterministic claim/citation/copyright check for one AI output
@@ -2478,12 +2512,17 @@ elif st.session_state.current_page == "audit":
         if open_loops:
             st.warning(f"**Open Verification/Validation Loops ({len(open_loops)})** — links exist but no completed Test Result closes them:")
             for gap in open_loops:
+                node_status = gap["status"]
                 st.write(f"- `{gap['id']}` [{gap['node_type']}] {gap['title']} — {gap['issue']}")
+                if node_status == NodeStatus.PENDING_REVIEW.value:
+                    _render_node_review_controls(g, gap["id"], audit_log)
 
         if open_capas:
             st.warning(f"**Open CAPAs ({len(open_capas)})** — not yet active or approved:")
             for n in open_capas:
                 st.write(f"- `{n['id']}` {n['title']} — status: {n['status']}")
+                if n["status"] == NodeStatus.PENDING_REVIEW.value:
+                    _render_node_review_controls(g, n["id"], audit_log)
 
     # ── FDA inspection readiness (CP 7382.850) ────────────────────────────────
     def _md_escape(text: str) -> str:
