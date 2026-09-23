@@ -1563,6 +1563,24 @@ elif st.session_state.current_page == "graph_explorer":
                 else:
                     st.caption("No edges in graph.")
 
+            # ── PENDING REVIEW ───────────────────────────────────────────────
+            pending_nodes = [
+                n for n in g.all_nodes()
+                if n["status"] == NodeStatus.PENDING_REVIEW.value
+            ]
+            if pending_nodes:
+                st.divider()
+                st.markdown(
+                    f"**Pending review** — {len(pending_nodes)} node(s) awaiting sign-off",
+                    help="Approve to close the V&V loop; reject to invalidate.",
+                )
+                for pn in pending_nodes:
+                    with st.container(border=True):
+                        vv_icon = " 🔴" if pn["node_type"] == NodeType.TEST_RESULT.value else ""
+                        st.caption(f"`{pn['id']}` {pn['node_type']}{vv_icon}")
+                        st.write(pn["title"])
+                        _render_node_review_controls(g, pn["id"], st.session_state.audit_log)
+
         # ── LEFT PANEL — GRAPH ───────────────────────────────────────────────
         with col_graph:
 
