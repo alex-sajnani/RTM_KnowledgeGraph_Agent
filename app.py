@@ -2515,14 +2515,14 @@ elif st.session_state.current_page == "audit":
                 node_status = gap["status"]
                 st.write(f"- `{gap['id']}` [{gap['node_type']}] {gap['title']} — {gap['issue']}")
                 if node_status == NodeStatus.PENDING_REVIEW.value:
-                    _render_node_review_controls(g, gap["id"], audit_log)
+                    _render_node_review_controls(g, gap["id"], st.session_state.audit_log)
 
         if open_capas:
             st.warning(f"**Open CAPAs ({len(open_capas)})** — not yet active or approved:")
             for n in open_capas:
                 st.write(f"- `{n['id']}` {n['title']} — status: {n['status']}")
                 if n["status"] == NodeStatus.PENDING_REVIEW.value:
-                    _render_node_review_controls(g, n["id"], audit_log)
+                    _render_node_review_controls(g, n["id"], st.session_state.audit_log)
 
     # ── FDA inspection readiness (CP 7382.850) ────────────────────────────────
     def _md_escape(text: str) -> str:
